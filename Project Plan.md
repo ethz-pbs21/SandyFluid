@@ -20,9 +20,11 @@ Successfully implement PIC & FLIP methods to animate sand in a simple scene.
 
 Successfully implement PIC, FLIP, and one extra PIC-based (RPIC/APIC/PolyPIC) method to animate sand. Also implement their normal version for fluid simulation to show comparison in more complex scenes.
 
+Reconstruct surfaces from the simulation results using anisotropic kernels (https://www.cc.gatech.edu/~turk/my_papers/sph_surfaces.pdf). Write scripts to output the reconstructed meshes per-frame, and import them into Blender for final rendering.
+
 ##### Timeline
 
 **By milestone:** Correct implementation of PIC & FLIP to animate sand, can show demo in a simple scene.
 
-**By final presentation:** Correct implementation of PIC, FLIP, and one PIC-based method to animate sand and normal fluid (water), can show demo in more complex scenes. Each team member will mainly implemente one of those methods.
+**By final presentation:** Correct implementation of PIC, FLIP, and one PIC-based method to animate sand and normal fluid (water), can show demo in more complex scenes. Each team member will mainly implement one of those methods.
 
