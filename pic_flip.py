@@ -140,23 +140,23 @@ class MultigridPCGPoissonSolver:
 
         def _res(l): return (nx // (2**l), ny // (2**l))
 
-        self.r = [ti.var(dt=ti.f32, shape=_res(_))
+        self.r = [ti.field(dtype=ti.f32, shape=_res(_))
                   for _ in range(self.n_mg_levels)]  # residual
-        self.z = [ti.var(dt=ti.f32, shape=_res(_))
+        self.z = [ti.field(dtype=ti.f32, shape=_res(_))
                   for _ in range(self.n_mg_levels)]  # M^-1 r
-        self.d = [ti.var(dt=ti.f32, shape=_res(_))
+        self.d = [ti.field(dtype=ti.f32, shape=_res(_))
                   for _ in range(self.n_mg_levels)]  # temp
-        self.f = [marker] + [ti.var(dt=ti.i32, shape=_res(_))
+        self.f = [marker] + [ti.field(dtype=ti.i32, shape=_res(_))
                              for _ in range(self.n_mg_levels - 1)]  # marker
-        self.L = [ti.Vector(6, dt=ti.f32, shape=_res(_))
+        self.L = [ti.Vector.field(6, dtype=ti.f32, shape=_res(_))
                   for _ in range(self.n_mg_levels)]  # -L operator
 
-        self.x = ti.var(dt=ti.f32, shape=shape)  # solution
-        self.p = ti.var(dt=ti.f32, shape=shape)  # conjugate gradient
-        self.Ap = ti.var(dt=ti.f32, shape=shape)  # matrix-vector product
-        self.alpha = ti.var(dt=ti.f32, shape=())  # step size
-        self.beta = ti.var(dt=ti.f32, shape=())  # step size
-        self.sum = ti.var(dt=ti.f32, shape=())  # storage for reductions
+        self.x = ti.field(dtype=ti.f32, shape=shape)  # solution
+        self.p = ti.field(dtype=ti.f32, shape=shape)  # conjugate gradient
+        self.Ap = ti.field(dtype=ti.f32, shape=shape)  # matrix-vector product
+        self.alpha = ti.field(dtype=ti.f32, shape=())  # step size
+        self.beta = ti.field(dtype=ti.f32, shape=())  # step size
+        self.sum = ti.field(dtype=ti.f32, shape=())  # storage for reductions
 
         for _ in range(self.n_mg_levels):
             print(f'r[{_}].shape = {self.r[_].shape}')
@@ -404,20 +404,20 @@ class FlipSolver:
     pass
 
 
-pressure = ti.var(dt=ti.f32, shape=(nx, ny))
+pressure = ti.field(dtype=ti.f32, shape=(nx, ny))
 pressure_tex = Texture(pressure, 0.5, 0.5, nx, ny)
 
-divergence = ti.var(dt=ti.f32, shape=(nx, ny))
+divergence = ti.field(dtype=ti.f32, shape=(nx, ny))
 divergence_tex = Texture(divergence, 0.5, 0.5, nx, ny)
 
-marker = ti.var(dt=ti.i32, shape=(nx, ny))
+marker = ti.field(dtype=ti.i32, shape=(nx, ny))
 
-ux = ti.var(dt=ti.f32, shape=(nx + 1, ny))
-uy = ti.var(dt=ti.f32, shape=(nx, ny + 1))
-ux_temp = ti.var(dt=ti.f32, shape=(nx + 1, ny))
-uy_temp = ti.var(dt=ti.f32, shape=(nx, ny + 1))
-ux_saved = ti.var(dt=ti.f32, shape=(nx + 1, ny))
-uy_saved = ti.var(dt=ti.f32, shape=(nx, ny + 1))
+ux = ti.field(dtype=ti.f32, shape=(nx + 1, ny))
+uy = ti.field(dtype=ti.f32, shape=(nx, ny + 1))
+ux_temp = ti.field(dtype=ti.f32, shape=(nx + 1, ny))
+uy_temp = ti.field(dtype=ti.f32, shape=(nx, ny + 1))
+ux_saved = ti.field(dtype=ti.f32, shape=(nx + 1, ny))
+uy_saved = ti.field(dtype=ti.f32, shape=(nx, ny + 1))
 ux_tex = Texture(ux, 0.0, 0.5, nx + 1, ny)
 uy_tex = Texture(uy, 0.5, 0.0, nx, ny + 1)
 ux_temp_tex = Texture(ux_temp, 0.0, 0.5, nx + 1, ny)
@@ -425,14 +425,14 @@ uy_temp_tex = Texture(uy_temp, 0.5, 0.0, nx, ny + 1)
 # ux_swap = Swapper(ux, ux_temp, ux_tex, ux_temp_tex)
 # uy_swap = Swapper(uy, uy_temp, uy_tex, uy_temp_tex)
 
-px = ti.Vector(2, dt=ti.f32, shape=(nx * 2, ny * 2))
-pv = ti.Vector(2, dt=ti.f32, shape=(nx * 2, ny * 2))
-pf = ti.var(dt=ti.i32, shape=(nx * 2, ny * 2))
+px = ti.Vector.field(2, dtype=ti.f32, shape=(nx * 2, ny * 2))
+pv = ti.Vector.field(2, dtype=ti.f32, shape=(nx * 2, ny * 2))
+pf = ti.field(dtype=ti.i32, shape=(nx * 2, ny * 2))
 
-valid = ti.var(dt=ti.i32, shape=(nx + 1, ny + 1))
-valid_temp = ti.var(dt=ti.i32, shape=(nx + 1, ny + 1))
+valid = ti.field(dtype=ti.i32, shape=(nx + 1, ny + 1))
+valid_temp = ti.field(dtype=ti.i32, shape=(nx + 1, ny + 1))
 
-color_buffer = ti.Vector(3, dt=ti.f32, shape=(res_x, res_y))
+color_buffer = ti.Vector.field(3, dtype=ti.f32, shape=(res_x, res_y))
 
 
 ps = MultigridPCGPoissonSolver(marker, nx, ny)
@@ -836,8 +836,8 @@ class Viewer:
         # fill_pressure()
         # fill_particles()
         #fill_marker()
-        #gui.show()
-        gui.show(f'{self.frame:06d}.png')
+        # gui.show()
+        # gui.show(f'{self.frame:06d}.png')
 
         # if self.dump:
         #     self.video_manager.write_frame()
