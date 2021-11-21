@@ -12,7 +12,7 @@ res_x = 512
 res_y = res_x * ny // nx
 
 use_flip = True
-save_results = True
+save_results = False
 
 gravity = -9.8
 flip_viscosity = 0.01
@@ -155,7 +155,7 @@ class MultigridPCGPoissonSolver:
                   for _ in range(self.n_mg_levels)]  # temp
         self.f = [marker] + [ti.field(dtype=ti.i32, shape=_res(_))
                              for _ in range(self.n_mg_levels - 1)]  # marker
-        self.L = [ti.Vector(6, dt=ti.f32, shape=_res(_))
+        self.L = [ti.Vector.field(6, dtype=ti.f32, shape=_res(_))
                   for _ in range(self.n_mg_levels)]  # -L operator
 
         self.x = ti.field(dtype=ti.f32, shape=shape)  # solution
@@ -430,19 +430,19 @@ uy_saved = ti.field(dtype=ti.f32, shape=(nx, ny + 1))
 # ux_temp_tex = Texture(ux_temp, 0.0, 0.5, nx + 1, ny)
 # uy_temp_tex = Texture(uy_temp, 0.5, 0.0, nx, ny + 1)
 
-cp_x = ti.Vector(2, dt=ti.f32, shape=(nx * 2, ny * 2))
-cp_y = ti.Vector(2, dt=ti.f32, shape=(nx * 2, ny * 2))
+cp_x = ti.Vector.field(2, dtype=ti.f32, shape=(nx * 2, ny * 2))
+cp_y = ti.Vector.field(2, dtype=ti.f32, shape=(nx * 2, ny * 2))
 # ux_swap = Swapper(ux, ux_temp, ux_tex, ux_temp_tex)
 # uy_swap = Swapper(uy, uy_temp, uy_tex, uy_temp_tex)
 
-px = ti.Vector(2, dt=ti.f32, shape=(nx * 2, ny * 2))
-pv = ti.Vector(2, dt=ti.f32, shape=(nx * 2, ny * 2))
+px = ti.Vector.field(2, dtype=ti.f32, shape=(nx * 2, ny * 2))
+pv = ti.Vector.field(2, dtype=ti.f32, shape=(nx * 2, ny * 2))
 pf = ti.field(dtype=ti.i32, shape=(nx * 2, ny * 2))
 
 valid = ti.field(dtype=ti.i32, shape=(nx + 1, ny + 1))
 valid_temp = ti.field(dtype=ti.i32, shape=(nx + 1, ny + 1))
 
-color_buffer = ti.Vector(3, dt=ti.f32, shape=(res_x, res_y))
+color_buffer = ti.Vector.field(3, dtype=ti.f32, shape=(res_x, res_y))
 
 
 ps = MultigridPCGPoissonSolver(marker, nx, ny)
@@ -853,7 +853,7 @@ class Viewer:
         # gui.clear(0x0)
         gui.circles(np.reshape(px.to_numpy(), (nx * ny * 4, 2)) *
                      np.array([[1.0 / nx, 1.0 / nx]]), radius=1, color=0x0FFFFF)
-        gui.show(f'{self.frame:06d}.png')
+        # gui.show(f'{self.frame:06d}.png')
 
         self.frame = self.frame + 1
 
