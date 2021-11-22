@@ -17,10 +17,7 @@ params = {
 }
 
 
-@ti.func
-def clear_field(f: ti.template(), v: ti.template() = 0):
-    for x, y in ti.ndrange(*f.shape):
-        f[x, y] = v
+
 
 
 @ti.kernel
@@ -31,13 +28,12 @@ def abs_vector(f1: ti.template(), f2: ti.template(), fout: ti.template()):
 
 @ti.data_oriented
 class HybridSimulator(object):
-    def __init__(
-        self,
-        params : dict
-    ):
-
+    def __init__(self, params : dict):
         def get_param(key:str, default_val=None):
             return params[key] if key in params else default_val
+
+        # Number of particles
+        self.num_particles = # todo
 
         # Time step
         self.dt = get_param('dt')
@@ -51,7 +47,9 @@ class HybridSimulator(object):
         self.paused = paused
 
         # parameters that are fixed (changing these after starting the simulatin will not have an effect!)
-        self.resolution = resolution
+        self.grid_size = ti.Vector(get_param('grid_size'))
+        self.inv_grid_size = 1.0 / ti.Vector
+
         self.rho = 1.0 # todo: unit?
         self.dx = 1.0 / self.resolution[0]
 
@@ -60,199 +58,73 @@ class HybridSimulator(object):
         self.t = 0.0
         # self.r_wind = ti.Vector.field(1, ti.i32, shape=(1))
 
-        # scalar fields
-        self.density = ti.field(ti.f32, shape=self.resolution)
-        self.density_forward = ti.field(ti.f32, shape=self.resolution)
-        self.density_backward = ti.field(ti.f32, shape=self.resolution)
-        self.density_old = ti.field(ti.f32, shape=self.resolution)
-
-        self.pressure = ti.field(ti.f32, shape=self.resolution)
-
-        self.divergence = ti.field(ti.f32, shape=self.resolution)
-
-        # self.vorticity = ti.field(ti.f32, shape=self.resolution)
-
-        # Particles
-        self.particles_position = ti.Vector.field(3, dtype=ti.f32, shape=)
-        self.particles_velocity = 
-
-        # MAC Grids
-        self.velocity_x = ti.field(
-            ti.f32, shape=(self.resolution[0] + 1, self.resolution[1], self.resolution[2])
-        )
-        self.velocity_y = ti.field(
-            ti.f32, shape=(self.resolution[0], self.resolution[1] + 1, self.resolution[2])
-        )
-        self.velocity_z = ti.field(
-            ti.f32, shape=(self.resolution[0], self.resolution[1], self.resolution[2] + 1)
-        )
-
-        self.velocity_x_forward = ti.field(
-            ti.f32, shape=(self.resolution[0] + 1, self.resolution[1])
-        )
-        self.velocity_y_forward = ti.field(
-            ti.f32, shape=(self.resolution[0], self.resolution[1] + 1)
-        )
-        self.velocity_z_forward = ti.field(
-            ti.f32, shape=(self.resolution[0], self.resolution[1], self.resolution[2] + 1)
-        )
-
-        self.velocity_x_backward = ti.field(
-            ti.f32, shape=(self.resolution[0] + 1, self.resolution[1])
-        )
-        self.velocity_y_backward = ti.field(
-            ti.f32, shape=(self.resolution[0], self.resolution[1] + 1)
-        )
-        self.velocity_z_backward = ti.field(
-            ti.f32, shape=(self.resolution[0], self.resolution[1], self.resolution[2] + 1)
-        )
-
-        self.velocity_x_old = ti.field(
-            ti.f32, shape=(self.resolution[0] + 1, self.resolution[1])
-        )
-        self.velocity_y_old = ti.field(
-            ti.f32, shape=(self.resolution[0], self.resolution[1] + 1)
-        )
-        self.velocity_z_old = ti.field(
-            ti.f32, shape=(self.resolution[0], self.resolution[1], self.resolution[2] + 1)
-        )
-
-
         self.reset()
 
-    def reset(self):
-        self._reset()
+    def init_fields(self):
+        # Particles
+        self.particles_position = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
+        self.particles_velocity = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
 
-        # reset simulation state
+        # MAC grid
+        # self.pressure = ti.field(ti.f32, shape=self.resolution)
+        self.velocity_x = ti.field(ti.f32, shape=(self.resolution[0] + 1, self.resolution[1], self.resolution[2]))
+        self.velocity_y = ti.field(ti.f32, shape=(self.resolution[0], self.resolution[1] + 1, self.resolution[2]))
+        self.velocity_z = ti.field(ti.f32, shape=(self.resolution[0], self.resolution[1], self.resolution[2] + 1))
+
+        # self.divergence = ti.field(ti.f32, shape=self.resolution)
+
+
+
+
+    def reset(self):
+        # Reset simulation state
         self.cur_step = 0
         self.t = 0.0
 
-    @ti.kernel
-    def _reset(self):
-        # zero out all fields
-        clear_field(self.density)
-        clear_field(self.density_forward)
-        clear_field(self.density_backward)
-        clear_field(self.density_old)
-        clear_field(self.pressure)
-        clear_field(self.divergence)
-        clear_field(self.velocity_x)
-        clear_field(self.velocity_y)
-        clear_field(self.velocity_z)
-        clear_field(self.velocity_x_forward)
-        clear_field(self.velocity_y_forward)
-        clear_field(self.velocity_z_forward)
-        clear_field(self.velocity_x_backward)
-        clear_field(self.velocity_y_backward)
-        clear_field(self.velocity_z_backward)
-        clear_field(self.velocity_x_old)
-        clear_field(self.velocity_y_old)
-        clear_field(self.velocity_z_old)
-
-        # add initial density
-        self.apply_density_source()
 
     def step(self, dt):
-        # Apply body force
-        self.apply_force(dt)
+        self.cur_step += 1
+        self.t += dt
 
-        # Particle to grid
+        # Apply body force
+        self.apply_force()
+
+        # Scatter properties (mainly velocity) from particle to grid
         self.p2g()
 
-        #apply_bc()
+        # Solve the poisson equation to get pressure
+        self.solve_pressure()
 
-        #extrap_velocity()
-        #apply_bc()
+        # Accelerate velocity using the solved pressure
+        self.project_velocity()
 
-        solve_pressure()
-        apply_pressure()
+        # Gather properties (mainly velocity) from grid to particle
+        self.g2p()
 
-        #extrap_velocity()
-        apply_bc()
+        # Enforce boundary condition
+        self.enforce_boundary_condition()
 
-        if use_flip:
-            update_from_grid()
-            advect_markers(dt)
-            apply_markers()
+        # Advect particles
+        self.advect_particles()
 
-            ux.fill(0.0)
-            uy.fill(0.0)
-            ux_temp.fill(0.0)
-            uy_temp.fill(0.0)
-            transfer_to_grid(ux_temp, uy_temp)  # reuse buffers
-
-            save_velocities()
-
-        else:
-            advect_markers(dt)
-            apply_markers()
-
-            advect(ux_temp, ux, dt, 0.0, 0.5, nx + 1, ny)
-            advect(uy_temp, uy, dt, 0.5, 0.0, nx, ny + 1)
-            ux.copy_from(ux_temp)
-            uy.copy_from(uy_temp)
-            apply_bc()
-
-
-    # def step(self):
-    #     if self.paused:
-    #         return
-    #     self.advance(
-    #         float(self.dt),
-    #         float(self.wind_strength),
-    #         float(self.vorticity_strength),
-    #         1 if self.mac_cormack else 0,
-    #         int(self.gauss_seidel_max_iterations),
-    #         float(self.gauss_seidel_min_accuracy),
-    #         1 if self.compute_final_divergence else 0,
-    #         1 if self.compute_final_vorticity else 0,
-    #     )
-    #     self.t += self.dt
-    #     self.cur_step += 1
-
+    # ###########################################################
+    # Kernels launched in one step
     @ti.kernel
-    def advance(
-        self,
-        dt: ti.f32,
-        mac_cormack: ti.i32,
-        gauss_seidel_max_iterations: ti.i32,
-        gauss_seidel_min_accuracy: ti.f32,
-        compute_final_divergence: ti.i32,
-        compute_final_vorticity: ti.i32,
-    ):
-
-
-        # apply forces to current velocities
-        self.apply_force(dt)
-
-        # solve pressure equation
-        self.solve_pressure(dt, gauss_seidel_max_iterations, gauss_seidel_min_accuracy)
-
-        # project velocity to be divergence free
-        self.project_velocity(dt)
-
-        # advect density and velocity
-        self.advect_values(dt, mac_cormack)
-
-        # compute final divergence and vorticiy if necessary (this can be used for debugging)
-        if compute_final_divergence != 0:
-            self.compute_divergence()
-        if compute_final_vorticity != 0:
-            self.compute_vorticity()
-
-
-
-
-    @ti.kernel
-    def apply_force(self, dt: ti.f32):
+    def apply_force(self):
         # only consider body force (gravity) for now
-        self.velocity_x += dt * self.
-        
+        for p in self.particles_velocity:
+            self.particles_velocity[p] += self.dt * self.g
 
-
-
-    # velocity projection
-    @ti.func
+    @ti.kernel
+    def p2g(self):
+        for p in self.particles_position:
+            xp = self.particles_position[p]
+            vp = self.particles_velocity[p]
+            base = ti.floor(xp)
+            frac = xp - base
+            self.interp_grid(base, frac)
+                
+    @ti.kernel
     def solve_pressure(
         self,
         dt: ti.f32,
@@ -298,128 +170,45 @@ class HybridSimulator(object):
             self.rho,
         )
 
-    @ti.func
+
+    @ti.kernel
     def project_velocity(self, dt: ti.f32):
         velocity_projection(
             self.velocity_x, self.velocity_y, self.pressure, dt, self.dx
         )
 
-    # advection
+    @ti.kernel
+    def g2p():
+        pass
 
+
+    @ti.kernel
+    def enforce_boundary_condition(self):
+        pass
+
+    @ti.kernel
+    def advect_particles(self):
+        pass
+
+    # ###########################################################
+    # Funcs called by kernels
     @ti.func
-    def advect_values(self, dt: ti.f32, mac_cormack: ti.i32):
+    def interp_grid(self, base, frac):
+        # Quadratic B-spline
+        # todo: try other kernels (linear, cubic, ...)
+        w = [0.5*(1.5-frac) ** 2, 0.75 - (frac - 1.0) ** 2, 0.5 * (frac -0.5)**2]
 
-        # save old values
-        copy_field(self.density, self.density_old)
-        copy_field(self.velocity_x, self.velocity_x_old)
-        copy_field(self.velocity_y, self.velocity_y_old)
-
-        # advect values forward
-        advect_density(
-            self.density,
-            self.density_forward,
-            self.velocity_x,
-            self.velocity_y,
-            dt,
-            self.dx,
-        )
-        advect_velocity_x(
-            self.velocity_x,
-            self.velocity_x_forward,
-            self.velocity_x,
-            self.velocity_y,
-            dt,
-            self.dx,
-        )
-        advect_velocity_y(
-            self.velocity_y,
-            self.velocity_y_forward,
-            self.velocity_x,
-            self.velocity_y,
-            dt,
-            self.dx,
-        )
-
-        # copy forward values to current buffers
-        copy_field(self.density_forward, self.density)
-        copy_field(self.velocity_x_forward, self.velocity_x)
-        copy_field(self.velocity_y_forward, self.velocity_y)
-
-        # do MacCormack update if necessary
-        if mac_cormack != 0:
-            self.mac_cormack_update(dt)
-            self.mac_cormack_clamp(dt)
-
-    @ti.func
-    def mac_cormack_update(self, dt: ti.f32):
-
-        mac_cormack_update(
-            self.density,
-            self.velocity_x,
-            self.velocity_y,
-            self.density_backward,
-            self.density_old,
-            self.velocity_x_backward,
-            self.velocity_x_old,
-            self.velocity_y_backward,
-            self.velocity_y_old,
-            dt,
-            self.dx,
-        )
-
-    @ti.func
-    def mac_cormack_clamp(self, dt: ti.f32):
-        mac_cormack_clamp_density(
-            self.density,
-            self.density_old,
-            self.density_forward,
-            self.velocity_x_old,
-            self.velocity_y_old,
-            dt,
-            self.dx,
-        )
-        mac_cormack_clamp_velocity_x(
-            self.velocity_x,
-            self.velocity_x_old,
-            self.velocity_x_forward,
-            self.velocity_x_old,
-            self.velocity_y_old,
-            dt,
-            self.dx,
-        )
-        mac_cormack_clamp_velocity_x(
-            self.velocity_y,
-            self.velocity_y_old,
-            self.velocity_y_forward,
-            self.velocity_x_old,
-            self.velocity_y_old,
-            dt,
-            self.dx,
-        )
-
-    # divergence and vorticity
 
     @ti.func
     def compute_divergence(self):
-        for x, y in ti.ndrange(
-            (1, self.resolution[0] - 1), (1, self.resolution[1] - 1)
+        for i, j, k in ti.ndrange(
+            (1, self.grid_size[0] - 1), (1, self.grid_size[1] - 1), (1, self.grid_size[2] - 1)
         ):
             dudx = (self.velocity_x[x + 1, y] - self.velocity_x[x, y]) / self.dx
             dudy = (self.velocity_y[x, y + 1] - self.velocity_y[x, y]) / self.dx
             self.divergence[x, y] = dudx + dudy
 
-    @ti.func
-    def compute_vorticity(self):
-        for x, y in ti.ndrange(
-            (2, self.resolution[0] - 2), (2, self.resolution[1] - 2)
-        ):
-            dudy = (
-                (self.velocity_x[x, y + 1] - self.velocity_x[x, y - 1]) / self.dx * 0.5
-            )
-            dvdx = (
-                (self.velocity_y[x + 1, y] - self.velocity_y[x - 1, y]) / self.dx * 0.5
-            )
-            self.vorticity[x, y] = dvdx - dudy
+
 
 
 @ti.data_oriented
@@ -510,6 +299,11 @@ class SimulationGUI(object):
         self.gui.set_image(img)
 
         self.gui.rect(topleft=[0, 1], bottomright=[1, 0])
+
+        self.gui.circles()
+        self.gui.line
+
+
 
     def run(self):
         while self.gui.running:
