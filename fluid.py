@@ -6,542 +6,15 @@ from numpy.core.fromnumeric import shape
 import taichi as ti
 from taichi.misc.gui import rgb_to_hex
 import numpy as np
-from taichi.lang.ops import cos, sqrt
 import utils
 
-ti.init(arch=ti.cpu)
-
-# --------------- Exercise start ---------------------------------
-
-# default simulation parameters
-TIME_STEP = 0.045
-WIND = 0.0  # float to set wind strength
-VORTICITY = 0.0  # for vorticity confinement
-MAC_CORMACK = False  # use MacCormack advection scheme?
-MAX_ITER = 1e4  # maximum iterations for Gauss-Seidel
-MIN_ACC = 1e-5  # minimum accuracy for Gauss-Seidel
-# If this is set the divergence is computed again at the end of each simulation step (may be usefull for debugging)
-COMPUTE_FINAL_DIVERGENCE = False
-# If this is set the vorticity is computed again at the end of each simulation step (may be usefull for debugging)
-COMPUTE_FINAL_VORTICITY = False
-
-# Problem 1
-
-
-@ti.func
-def gauss_seidel_poisson_solver(
-    pressure: ti.template(),
-    divergence: ti.template(),
-    dt: ti.f32,
-    dx: ti.f32,
-    max_iterations: ti.i32,
-    min_accuracy: ti.f32,
-    rho: ti.f32,
-):
-    """This method solves the pressure poisson equation using the Gauss-Seidel method.
-
-    Args:
-        pressure (ti.template): pressure (this argument will be modified)
-        divergence (ti.template): divergence
-        dt (ti.template): time step
-        dx (ti.template): cell size (assume square cells)
-        max_iterations (ti.i32): maximum iterations to perform
-        min_accuracy (ti.f32): minimum required accuracy (stop if achieved)
-        rho (ti.f32): rho
-    """
-    dx2 = dx * dx
-    res_x, res_y = pressure.shape
-
-    # run Gauss-Seidel as long as max iterations has not been reached and accuracy is not good enough
-    residual = min_accuracy + 1
-    iterations = 0
-    while iterations < max_iterations and residual > min_accuracy:
-        residual = 0.0
-
-        for y in range(1, res_y - 1):
-            for x in range(1, res_x - 1):
-                b = -divergence[x, y] / dt * rho
-
-                # TODO: update the pressure at (x, y)
-                pressure[x, y] = (
-                    dx2 * b
-                    + pressure[x - 1, y]
-                    + pressure[x + 1, y]
-                    + pressure[x, y - 1]
-                    + pressure[x, y + 1]
-                ) / 4.0
-
-        for y in range(1, res_y - 1):
-            for x in range(1, res_x - 1):
-                b = -divergence[x, y] / dt * rho
-                # TODO: compute the residual for cell (x, y)
-
-                cell_residual = 0.0
-                cell_residual = (
-                    b
-                    - (
-                        4.0 * pressure[x, y]
-                        - pressure[x - 1, y]
-                        - pressure[x + 1, y]
-                        - pressure[x, y - 1]
-                        - pressure[x, y + 1]
-                    )
-                    / dx2
-                )
-
-                residual += cell_residual * cell_residual
-
-        residual = sqrt(residual)
-        residual /= (res_x - 2) * (res_y - 2)
-
-        iterations += 1
-
-
-# Problem 2
-
-
-@ti.func
-def velocity_projection(
-    velocity_x: ti.template(),
-    velocity_y: ti.template(),
-    pressure: ti.template(),
-    dt: ti.f32,
-    dx: ti.f32,
-):
-    """This method implements the velocity projection to make the velocity divergence free
-
-    Args:
-        velocity_x (ti.template): velocity in x direction (on MAC Grid!) (this will be modified)
-        velocity_y (ti.template): velocity in y direction (on MAC Grid!) (this will be modified)
-        pressure (ti.template): pressure
-        dt (ti.f32): time step
-        dx (ti.f32): cell size (assume square cells)
-    """
-
-    res_x, res_y = pressure.shape
-
-    for x, y in ti.ndrange((1, res_x), (1, res_y - 1)):
-        # TODO: project the x velocity
-        velocity_x[x, y] -= dt * (pressure[x, y] - pressure[x - 1, y]) / dx
-
-    for x, y in ti.ndrange((1, res_x - 1), (1, res_y)):
-        # TODO: project the y velocity
-        velocity_y[x, y] -= dt * (pressure[x, y] - pressure[x, y - 1]) / dx
-
-
-# Problem 3
-
-
-@ti.func
-def advect_density(
-    d_in: ti.template(),
-    d_out: ti.template(),
-    vx: ti.template(),
-    vy: ti.template(),
-    dt: ti.f32,
-    dx: ti.f32,
-):
-    """This method implements semi lagrangian advection for values at cell centers.
-
-    Args:
-        d_in (ti.template): Density to be advected (current values)
-        d_out (ti.template): Target buffer for advected densities (new values) (this value will be modified)
-        vx (ti.template): x velocity field to be used for advection
-        vy (ti.template): y velocity field to be used for advection
-        dt (ti.f32): time step
-        dx (ti.f32): cell size
-    """
-
-    res_x, res_y = d_in.shape
-
-    for y in range(1, res_y - 1):
-        for x in range(1, res_x - 1):
-
-            # TODO: get velocity at current position
-            last_velocity_x = (vx[x, y] + vx[x + 1, y]) / 2.0
-            last_velocity_y = (vy[x, y] + vy[x, y + 1]) / 2.0
-
-            # TODO: compute last position (in grid coordinates) using current velocity
-            last_position_x = x - dt / dx * last_velocity_x
-            last_position_y = y - dt / dx * last_velocity_y
-
-            # make sure last postion is inside grid
-            last_position_x = min(max(last_position_x, 1), res_x - 2)
-            last_position_y = min(max(last_position_y, 1), res_y - 2)
-
-            # compute cell corners
-            x_low, y_low = int(last_position_x), int(last_position_y)
-            x_high, y_high = x_low + 1, y_low + 1
-
-            # compute weights for interpolation
-            x_weight = last_position_x - x_low
-            y_weight = last_position_y - y_low
-
-            # TODO: compute density with bilinear interpolation
-            d_out[x, y] = (
-                x_weight * y_weight * d_in[x_high, y_high]
-                + (1.0 - x_weight) * y_weight * d_in[x_low, y_high]
-                + x_weight * (1.0 - y_weight) * d_in[x_high, y_low]
-                + (1.0 - x_weight) * (1.0 - y_weight) * d_in[x_low, y_low]
-            )
-
-
-@ti.func
-def advect_velocity_x(
-    vx_in: ti.template(),
-    vx_out: ti.template(),
-    vx: ti.template(),
-    vy: ti.template(),
-    dt: ti.f32,
-    dx: ti.f32,
-):
-    """This method implements semi lagrangian advection for values in x direction at left cell edge.
-
-    Args:
-        vx_in (ti.template): x velocity to be advected (current values)
-        vx_out (ti.template): Target buffer for advected x velocity (new values) (this value will be modified)
-        vx (ti.template): x velocity field to be used for advection
-        vy (ti.template): y velocity field to be used for advection
-        dt (ti.f32): time step
-        dx (ti.f32): cell size
-    """
-
-    res_x, res_y = vx_in.shape
-    for y in range(1, res_y - 1):
-        for x in range(1, res_x - 1):
-
-            # TODO: get velocity at current position
-            last_x_velocity = vx[x, y]
-            last_y_velocity = (
-                vy[x, y] + vy[x - 1, y] + vy[x - 1, y + 1] + vy[x, y + 1]
-            ) / 4.0
-
-            # TODO: compute last position (in grid coordinates) using current velocities
-            last_position_x = x - dt / dx * last_x_velocity
-            last_position_y = y - dt / dx * last_y_velocity
-
-            # make sure last postion is inside grid
-            last_position_x = min(max(last_position_x, 1.5), res_x - 2.5)
-            last_position_y = min(max(last_position_y, 1.5), res_y - 2.5)
-
-            # compute cell corners
-            x_low, y_low = int(last_position_x), int(last_position_y)
-            x_high, y_high = x_low + 1, y_low + 1
-
-            # compute weights for interpolation
-            x_weight = last_position_x - x_low
-            y_weight = last_position_y - y_low
-
-            # TODO: compute velocity with bilinear interpolation
-            vx_out[x, y] = (
-                x_weight * y_weight * vx_in[x_high, y_high]
-                + (1.0 - x_weight) * y_weight * vx_in[x_low, y_high]
-                + x_weight * (1.0 - y_weight) * vx_in[x_high, y_low]
-                + (1.0 - x_weight) * (1.0 - y_weight) * vx_in[x_low, y_low]
-            )
-
-
-@ti.func
-def advect_velocity_y(
-    vy_in: ti.template(),
-    vy_out: ti.template(),
-    vx: ti.template(),
-    vy: ti.template(),
-    dt: ti.f32,
-    dx: ti.f32,
-):
-    """This method implements semi lagrangian advection for values in y direction at bottom cell edge.
-
-    Args:
-        vx_in (ti.template): y velocity to be advected (current values)
-        vx_out (ti.template): Target buffer for advected y velocity (new values) (this value will be modified)
-        vx (ti.template): x velocity field to be used for advection
-        vy (ti.template): y velocity field to be used for advection
-        dt (ti.f32): time step
-        dx (ti.f32): cell size
-    """
-
-    res_x, res_y = vy_in.shape
-
-    # velocity y component
-    for y in range(1, res_y - 1):
-        for x in range(1, res_x - 1):
-
-            # TODO: get velocity at current position
-            last_x_velocity = (
-                vx[x, y] + vx[x + 1, y] + vx[x + 1, y - 1] + vx[x, y - 1]
-            ) / 4.0
-            last_y_velocity = vy[x, y]
-
-            # TODO: compute last position (in grid cooridantes) using current velocities
-            last_position_x = x - dt / dx * last_x_velocity
-            last_position_y = y - dt / dx * last_y_velocity
-
-            # make sure last postion is inside grid
-            last_position_x = min(max(last_position_x, 1.5), res_x - 2.5)
-            last_position_y = min(max(last_position_y, 1.5), res_y - 2.5)
-
-            # compute cell corners
-            x_low, y_low = int(last_position_x), int(last_position_y)
-            x_high, y_high = x_low + 1, y_low + 1
-
-            # compute weights for interpolation
-            x_weight = last_position_x - x_low
-            y_weight = last_position_y - y_low
-
-            # TODO: compute velocity with bilinear interpolation
-            vy_out[x, y] = (
-                x_weight * y_weight * vy_in[x_high, y_high]
-                + (1.0 - x_weight) * y_weight * vy_in[x_low, y_high]
-                + x_weight * (1.0 - y_weight) * vy_in[x_high, y_low]
-                + (1.0 - x_weight) * (1.0 - y_weight) * vy_in[x_low, y_low]
-            )
-
-
-# Problem 4
-
-
-@ti.func
-def mac_cormack_update(
-    d: ti.template(),
-    vx: ti.template(),
-    vy: ti.template(),
-    d_backward: ti.template(),
-    d_old: ti.template(),
-    vx_backward: ti.template(),
-    vx_old: ti.template(),
-    vy_backward: ti.template(),
-    vy_old: ti.template(),
-    dt: ti.f32,
-    dx: ti.f32,
-):
-    """This method implements the MacCormack advection scheme
-
-    Args:
-        d (ti.template): density after standard SL advection (this will be modified)
-        vx (ti.template): velocity in x direction after standard SL advection (this will be modified)
-        vy (ti.template): velocity in y direction after standard SL advection (this will be modified)
-        d_backward (ti.template): buffer to store backward advected density (this may be modified)
-        d_old (ti.template): density from before standard SL advection
-        vx_backward (ti.template): buffer to store backward advected x velocity (this may be modified)
-        vx_old (ti.template): x velocity from before standard SL advection
-        vy_backward (ti.template): buffer to store backward advected y velocity (this may be modified)
-        vy_old (ti.template): y velocity from before standard SL advection
-        dt (ti.f32): time step
-        dx (ti.f32): cell size (assume square cells)
-    """
-
-    # TODO: advect density and velocities back. Hint: you should make use of the SL advection methods you implemented in Problem 3.
-    advect_density(d, d_backward, vx_old, vy_old, -dt, dx)
-    advect_velocity_x(vx, vx_backward, vx_old, vy_old, -dt, dx)
-    advect_velocity_y(vy, vy_backward, vx_old, vy_old, -dt, dx)
-
-    # do MacCormack update
-
-    for x, y in ti.ndrange(*d.shape):
-        # TODO: modify density (d)
-        d[x, y] += 0.5 * (d_old[x, y] - d_backward[x, y])
-
-    for x, y in ti.ndrange(*vx.shape):
-        # TODO: modify x velocity (vx)
-        vx[x, y] += 0.5 * (vx_old[x, y] - vx_backward[x, y])
-
-    for x, y in ti.ndrange(*vy.shape):
-        # TODO: modify y velocity (vy)
-        vy[x, y] += 0.5 * (vy_old[x, y] - vy_backward[x, y])
-
-
-@ti.func
-def mac_cormack_clamp_density(
-    d_in: ti.template(),
-    d_old: ti.template(),
-    d_forward: ti.template(),
-    vx: ti.template(),
-    vy: ti.template(),
-    dt: ti.f32,
-    dx: ti.f32,
-):
-    """This method implements the MacCormack clamping operation for values in the cell center.
-
-    Args:
-        d_in (ti.template): Density to be clamped (this will be modified)
-        d_old (ti.template): Original density before advection
-        d_forward (ti.template): New density after SL advection
-        vx (ti.template): x velocity used for old cell lookup
-        vy (ti.template): y velocity used for old cell lookup
-        dt (ti.f32): time step
-        dx (ti.f32): cell size
-    """
-
-    res_x, res_y = d_in.shape
-    for x, y in ti.ndrange((1, res_x - 1), (1, res_y - 1)):
-
-        # TODO: get velocity at current position
-        last_x_velocity = (vx[x, y] + vx[x + 1, y]) / 2.0
-        last_y_velocity = (vy[x, y] + vy[x, y + 1]) / 2.0
-
-        # TODO: compute last position (in grid coordinates) using current velocities
-        last_position_x = x - dt / dx * last_x_velocity
-        last_position_y = y - dt / dx * last_y_velocity
-
-        # make sure last postion is inside grid
-        last_position_x = min(max(last_position_x, 1), res_x - 2)
-        last_position_y = min(max(last_position_y, 1), res_y - 2)
-
-        # compute cell corners
-        x_low, y_low = int(last_position_x), int(last_position_y)
-        x_high, y_high = x_low + 1, y_low + 1
-
-        # compute min and max old densities at cell corners
-        d_min = min(
-            d_old[x_low, y_low],
-            d_old[x_low, y_high],
-            d_old[x_high, y_low],
-            d_old[x_high, y_high],
-        )
-        d_max = max(
-            d_old[x_low, y_low],
-            d_old[x_low, y_high],
-            d_old[x_high, y_low],
-            d_old[x_high, y_high],
-        )
-
-        # TODO: clamp density
-        if d_in[x, y] < d_min or d_in[x, y] > d_max:
-            d_in[x, y] = d_forward[x, y]
-
-
-@ti.func
-def mac_cormack_clamp_velocity_x(
-    vx_in: ti.template(),
-    vx_old: ti.template(),
-    vx_forward: ti.template(),
-    vx: ti.template(),
-    vy: ti.template(),
-    dt: ti.f32,
-    dx: ti.f32,
-):
-    """This method implements the MacCormack clamping operation for values in x direction at left cell edge.
-
-    Args:
-        d_in (ti.template): x velocity to be clamped (this will be modified)
-        d_old (ti.template): Original x velocity before advection
-        d_forward (ti.template): New x velocity after SL advection
-        vx (ti.template): x velocity used for old cell lookup
-        vy (ti.template): y velocity used for old cell lookup
-        dt (ti.f32): time step
-        dx (ti.f32): cell size
-    """
-
-    res_x, res_y = vx_in.shape
-    for x, y in ti.ndrange((1, res_x - 1), (1, res_y - 1)):
-
-        # TODO: get velocity at current position
-        last_x_velocity = vx[x, y]
-        last_y_velocity = (
-            vy[x, y] + vy[x - 1, y] + vy[x - 1, y + 1] + vy[x, y + 1]
-        ) / 4.0
-
-        # TODO: compute last position (in grid coordinates) using current velocities
-        last_position_x = x - dt / dx * last_x_velocity
-        last_position_y = y - dt / dx * last_y_velocity
-
-        # make sure last postion is inside grid
-        last_position_x = min(max(last_position_x, 1.5), res_x - 2.5)
-        last_position_y = min(max(last_position_y, 1.5), res_y - 2.5)
-
-        # compute cell corners
-        x_low, y_low = int(last_position_x), int(last_position_y)
-        x_high, y_high = x_low + 1, y_low + 1
-
-        # compute min and max old densities at cell corners
-        d_min = min(
-            vx_old[x_low, y_low],
-            vx_old[x_low, y_high],
-            vx_old[x_high, y_low],
-            vx_old[x_high, y_high],
-        )
-        d_max = max(
-            vx_old[x_low, y_low],
-            vx_old[x_low, y_high],
-            vx_old[x_high, y_low],
-            vx_old[x_high, y_high],
-        )
-
-        # TODO: clamp density
-        if vx_in[x, y] < d_min or vx_in[x, y] > d_max:
-            vx_in[x, y] = vx_forward[x, y]
-
-
-@ti.func
-def mac_cormack_clamp_velocity_y(
-    vy_in: ti.template(),
-    vy_old: ti.template(),
-    vy_forward: ti.template(),
-    vx: ti.template(),
-    vy: ti.template(),
-    dt: ti.f32,
-    dx: ti.f32,
-):
-    """This method implements the MacCormack clamping operation for values in y direction at bottom cell edge.
-
-    Args:
-        d_in (ti.template): y velocity to be clamped (this will be modified)
-        d_old (ti.template): Original y velocity before advection
-        d_forward (ti.template): New y velocity after SL advection
-        vx (ti.template): x velocity used for old cell lookup
-        vy (ti.template): y velocity used for old cell lookup
-        dt (ti.f32): time step
-        dx (ti.f32): cell size
-    """
-
-    res_x, res_y = vy_in.shape
-    for x, y in ti.ndrange((1, res_x - 1), (1, res_y - 1)):
-
-        # TODO: get velocity at current position
-        last_x_velocity = (
-            vx[x, y] + vx[x + 1, y] + vx[x + 1, y - 1] + vx[x, y - 1]
-        ) / 4.0
-        last_y_velocity = vy[x, y]
-
-        # TODO: compute last position (in grid coordinates) using current velocities
-        last_position_x = x - dt / dx * last_x_velocity
-        last_position_y = y - dt / dx * last_y_velocity
-
-        # make sure last postion is inside grid
-        last_position_x = min(max(last_position_x, 1.5), res_x - 2.5)
-        last_position_y = min(max(last_position_y, 1.5), res_y - 2.5)
-
-        # compute cell corners
-        x_low, y_low = int(last_position_x), int(last_position_y)
-        x_high, y_high = x_low + 1, y_low + 1
-
-        # compute min and max old densities at cell corners
-        d_min = min(
-            vy_old[x_low, y_low],
-            vy_old[x_low, y_high],
-            vy_old[x_high, y_low],
-            vy_old[x_high, y_high],
-        )
-        d_max = max(
-            vy_old[x_low, y_low],
-            vy_old[x_low, y_high],
-            vy_old[x_high, y_low],
-            vy_old[x_high, y_high],
-        )
-
-        # TODO: clamp density
-        if vy_in[x, y] < d_min or vy_in[x, y] > d_max:
-            vy_in[x, y] = vy_forward[x, y]
-
-
-@ti.func
-def copy_field(f_src: ti.template(), f_dst: ti.template()):
-    for x, y in ti.ndrange(*f_dst.shape):
-        f_dst[x, y] = f_src[x, y]
-
-
-# --------------- Exercise end ---------------------------------
+params = {
+    'dt' : 0.045,   # Time step
+    'mac_cormack' : False,
+    'gauss_seidel_max_iterations' : 1000,
+    'gauss_seidel_min_accuracy' : 1e-5,
+
+}
 
 
 @ti.func
@@ -560,29 +33,21 @@ def abs_vector(f1: ti.template(), f2: ti.template(), fout: ti.template()):
 class HybridSimulator(object):
     def __init__(
         self,
-        dt: float = TIME_STEP,
-        # wind_strength: float = WIND,
-        # vorticity_strength: float = VORTICITY,
-        mac_cormack: bool = MAC_CORMACK,
-        gauss_seidel_max_iterations: int = MAX_ITER,
-        gauss_seidel_min_accuracy: float = MIN_ACC,
-        # compute_final_divergence: bool = COMPUTE_FINAL_DIVERGENCE,
-        # compute_final_vorticity: bool = COMPUTE_FINAL_VORTICITY,
-        resolution: Tuple[float, float, float] = (128, 128, 128),
-        paused: bool = True,
+        params : dict
     ):
 
-        # parameters that can be changed
-        self.dt = dt
-        # body force (gravity)
+        def get_param(key:str, default_val=None):
+            return params[key] if key in params else default_val
+
+        # Time step
+        self.dt = get_param('dt')
+        # Body force (gravity)
         self.g = ti.Vector([0.0, 0.0, -9.8])
-        # self.wind_strength = wind_strength
-        # self.vorticity_strength = vorticity_strength
-        self.mac_cormack = mac_cormack
+
+        # 
         self.gauss_seidel_max_iterations = int(gauss_seidel_max_iterations)
         self.gauss_seidel_min_accuracy = gauss_seidel_min_accuracy
-        # self.compute_final_divergence = compute_final_divergence
-        # self.compute_final_vorticity = compute_final_vorticity
+
         self.paused = paused
 
         # parameters that are fixed (changing these after starting the simulatin will not have an effect!)
@@ -652,15 +117,6 @@ class HybridSimulator(object):
             ti.f32, shape=(self.resolution[0], self.resolution[1], self.resolution[2] + 1)
         )
 
-        # self.force_x = ti.field(
-        #     ti.f32, shape=(self.resolution[0] + 1, self.resolution[1])
-        # )
-        # self.force_y = ti.field(
-        #     ti.f32, shape=(self.resolution[0], self.resolution[1] + 1)
-        # )
-        # self.force_z = ti.field(
-        #     ti.f32, shape=(self.resolution[0], self.resolution[1], self.resolution[2] + 1)
-        # )
 
         self.reset()
 
@@ -680,7 +136,6 @@ class HybridSimulator(object):
         clear_field(self.density_old)
         clear_field(self.pressure)
         clear_field(self.divergence)
-        # clear_field(self.vorticity)
         clear_field(self.velocity_x)
         clear_field(self.velocity_y)
         clear_field(self.velocity_z)
@@ -693,36 +148,72 @@ class HybridSimulator(object):
         clear_field(self.velocity_x_old)
         clear_field(self.velocity_y_old)
         clear_field(self.velocity_z_old)
-        # clear_field(self.force_x)
-        # clear_field(self.force_y)
 
         # add initial density
         self.apply_density_source()
 
-        # self.r_wind.fill(0)
+    def step(self, dt):
+        # Apply body force
+        self.apply_force(dt)
 
-    def step(self):
-        if self.paused:
-            return
-        self.advance(
-            float(self.dt),
-            float(self.wind_strength),
-            float(self.vorticity_strength),
-            1 if self.mac_cormack else 0,
-            int(self.gauss_seidel_max_iterations),
-            float(self.gauss_seidel_min_accuracy),
-            1 if self.compute_final_divergence else 0,
-            1 if self.compute_final_vorticity else 0,
-        )
-        self.t += self.dt
-        self.cur_step += 1
+        # Particle to grid
+        self.p2g()
+
+        #apply_bc()
+
+        #extrap_velocity()
+        #apply_bc()
+
+        solve_pressure()
+        apply_pressure()
+
+        #extrap_velocity()
+        apply_bc()
+
+        if use_flip:
+            update_from_grid()
+            advect_markers(dt)
+            apply_markers()
+
+            ux.fill(0.0)
+            uy.fill(0.0)
+            ux_temp.fill(0.0)
+            uy_temp.fill(0.0)
+            transfer_to_grid(ux_temp, uy_temp)  # reuse buffers
+
+            save_velocities()
+
+        else:
+            advect_markers(dt)
+            apply_markers()
+
+            advect(ux_temp, ux, dt, 0.0, 0.5, nx + 1, ny)
+            advect(uy_temp, uy, dt, 0.5, 0.0, nx, ny + 1)
+            ux.copy_from(ux_temp)
+            uy.copy_from(uy_temp)
+            apply_bc()
+
+
+    # def step(self):
+    #     if self.paused:
+    #         return
+    #     self.advance(
+    #         float(self.dt),
+    #         float(self.wind_strength),
+    #         float(self.vorticity_strength),
+    #         1 if self.mac_cormack else 0,
+    #         int(self.gauss_seidel_max_iterations),
+    #         float(self.gauss_seidel_min_accuracy),
+    #         1 if self.compute_final_divergence else 0,
+    #         1 if self.compute_final_vorticity else 0,
+    #     )
+    #     self.t += self.dt
+    #     self.cur_step += 1
 
     @ti.kernel
     def advance(
         self,
         dt: ti.f32,
-        # wind_strength: ti.f32,
-        # vorticity_strength: ti.f32,
         mac_cormack: ti.i32,
         gauss_seidel_max_iterations: ti.i32,
         gauss_seidel_min_accuracy: ti.f32,
@@ -730,23 +221,6 @@ class HybridSimulator(object):
         compute_final_vorticity: ti.i32,
     ):
 
-        # self.apply_density_source()
-
-        # reset forces on grid
-        # self.reset_force()
-
-        # sum up all forces
-        # self.add_buoyancy()
-        # if wind_strength != 0:
-        #     self.add_wind(wind_strength)
-        # if vorticity_strength > 0:
-        #     self.add_vorticity_confinement(vorticity_strength)
-
-        # Apply body force
-        self.apply_force
-
-        # particle to grid
-        self.p2g()
 
         # apply forces to current velocities
         self.apply_force(dt)
@@ -766,77 +240,18 @@ class HybridSimulator(object):
         if compute_final_vorticity != 0:
             self.compute_vorticity()
 
-    # desity source
 
-    @ti.func
-    def apply_density_source(self):
-        x_min = int(np.floor(0.45 * self.resolution[0]))
-        x_max = int(np.ceil(0.55 * self.resolution[0]))
-        y_min = int(np.floor(0.1 * self.resolution[1]))
-        y_max = int(np.ceil(0.15 * self.resolution[1]))
-        for x, y in ti.ndrange((x_min, x_max), (y_min, y_max)):
-            self.density[x, y] = 1.0
 
-    # # forces
 
-    # @ti.func
-    # def add_buoyancy(self):
-    #     scaling = 64.0 / self.resolution[0]
-    #     for x, y in ti.ndrange(self.resolution[0], self.resolution[1] - 1):
-    #         self.force_y[x, y] += (
-    #             0.1 * (self.density[x, y - 1] + self.density[x, y]) / 2.0 * scaling
-    #         )
-
-    # @ti.func
-    # def add_wind(self, strength: ti.f32):
-    #     scaling = 64.0 / self.resolution[0] * strength
-    #     self.r_wind[0] += 1
-
-    #     f_wind = (
-    #         2e-2 * cos(5e-2 * self.r_wind[0]) * cos(3e-2 * self.r_wind[0]) * scaling
-    #     )
-    #     for x, y in ti.ndrange(self.resolution[0] + 1, self.resolution[1]):
-    #         self.force_x[x, y] += f_wind[0]
-
-    # @ti.func
-    # def add_vorticity_confinement(self, vorticity_strength: ti.f32):
-    #     self.compute_vorticity()
-
-    #     for x, y in ti.ndrange(
-    #         (2, self.resolution[0] - 2), (2, self.resolution[1] - 2)
-    #     ):
-    #         dwdx = (
-    #             (abs(self.vorticity[x + 1, y]) - abs(self.vorticity[x - 1, y]))
-    #             / self.dx
-    #             * 0.5
-    #         )
-    #         dwdy = (
-    #             (abs(self.vorticity[x, y + 1]) - abs(self.vorticity[x, y - 1]))
-    #             / self.dx
-    #             * 0.5
-    #         )
-    #         l = sqrt(dwdx * dwdx + dwdy * dwdy) + 1e-6
-    #         fx = vorticity_strength * self.dx * self.vorticity[x, y] * dwdy / l
-    #         fy = vorticity_strength * self.dx * self.vorticity[x, y] * -dwdx / l
-    #         self.force_x[x, y] += fx
-    #         self.force_y[x, y] += fy
-
-    @ti.func
+    @ti.kernel
     def apply_force(self, dt: ti.f32):
-        # for x, y in ti.ndrange(self.resolution[0], self.resolution[1]):
-        #     self.velocity_x[x, y] += dt * self.force_x[x, y]
-        #     self.velocity_y[x, y] += dt * self.force_y[x, y]
         # only consider body force (gravity) for now
         self.velocity_x += dt * self.
         
 
-    @ti.func
-    def reset_force(self):
-        clear_field(self.force_x)
-        clear_field(self.force_y)
+
 
     # velocity projection
-
     @ti.func
     def solve_pressure(
         self,
@@ -1188,5 +603,3 @@ class SimulationGUI(object):
                 self.min_accuracy_slider.value = min(self.min_accuracy_slider.value + 0.05, 1.0)
 
 
-if __name__ == "__main__":
-    SimulationGUI(HybridSimulator()).run()
