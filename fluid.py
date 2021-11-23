@@ -129,8 +129,21 @@ class HybridSimulator(object):
             self.interp_grid(base, frac, vp)
 
         for i, j, k in self.grid_velocity_x:
-            self.grid_velocity_x[]
-                
+            self.grid_velocity_x[i, j, k] /= self.grid_weight_x[i,j,k]
+        for i, j, k in self.grid_velocity_y:
+            self.grid_velocity_y[i, j, k] /= self.grid_weight_y[i,j,k]
+        for i, j, k in self.grid_velocity_x:
+            self.grid_velocity_z[i, j, k] /= self.grid_weight_z[i,j,k]
+
+    @ti.kernel
+    def g2p():
+        for p in self.particles_position:
+            xp = self.particles_position[p]
+            vp = self.particles_velocity[p]
+            base = ti.floor(xp)
+            frac = xp - base
+            self.interp_particle(base, frac, p)
+
     @ti.kernel
     def solve_pressure(
         self,
@@ -184,9 +197,7 @@ class HybridSimulator(object):
             self.grid_velocity_x, self.grid_velocity_y, self.pressure, dt, self.dx
         )
 
-    @ti.kernel
-    def g2p():
-        pass
+
 
 
     @ti.kernel
@@ -260,6 +271,9 @@ class HybridSimulator(object):
                     self.grid_velocity_z[idx] += vp.z * w
                     self.grid_weight_z[idx] += w
 
+    @ti.func
+    def interp_particle(self, base : ti.Matrix, frac : ti.Matrix, p):
+        pass
 
     @ti.func
     def compute_divergence(self):
