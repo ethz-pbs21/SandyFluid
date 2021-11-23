@@ -208,14 +208,16 @@ class HybridSimulator(object):
     # 0.5*(1.5-|x|)^2,  |x| in [0.5, 1.5)
     # 0,                |x| in [1.5, inf)
     @ti.func
-    def quadratic_kernel(x : float):
-        if x < 0.5:
-            return 0.75 - x**2
-        elif x < 1.5:
-            return 0.5 * (1.5 - x)**2
-        else:
-            return 0.0
-
+    def quadratic_kernel(x : ti.Matrix):
+        w = x.copy()
+        for i, xi in enumerate(x):
+            if xi < 0.5:
+                w[i] = 0.75 - xi**2
+            elif xi < 1.5:
+                w[i] = 0.5 * (1.5 - xi)**2
+            else:
+                w[i] = 0.0
+        return w
 
     
     @ti.func
@@ -226,18 +228,18 @@ class HybridSimulator(object):
 
         # Index on sides
         idx_side = [base-1, base, base+1, base+2]
-        # Distance to sides
-        dist_side = [1.0+frac, frac, 1.0-frac, 2.0-frac]
+        # Weight on sides
+        w_side = [self.quadratic_kernel(1.0+frac), self.quadratic_kernel(frac), self.quadratic_kernel(1.0-frac), self.quadratic_kernel(2.0-frac)]
         # Index on centers
         idx_center = [base-1, base, base+1]
-        # Distance to centers
-        dist_center = [0.5+frac, ti.abs(0.5-frac), 1.5-frac]
+        # Weight on centers
+        w_center = [self.quadratic_kernel(0.5+frac), self.quadratic_kernel(ti.abs(0.5-frac)), self.quadratic_kernel(1.5-frac)]
 
 
         for i in ti.static(range(4)):
             for j in ti.static(range(3)):
                 for k in ti.static(range(3)):
-                    w = self.quadratic_kernel(dist_side[i].x) * self.quadratic_kernel(dist_center[j].y)*self.quadratic_kernel(dist_center[k].z)
+                    w = w_side[i].x * w_center[j].y * w_center[k].z
                     idx = (idx_side[i].x, idx_center[j].y, idx_center[k].z)
                     self.grid_velocity_x[idx] += vp.x * w
                     self.grid_weight_x[idx] += w
@@ -245,7 +247,7 @@ class HybridSimulator(object):
         for i in ti.static(range(3)):
             for j in ti.static(range(4)):
                 for k in ti.static(range(3)):
-                    w = self.quadratic_kernel(dist_center[i].x) * self.quadratic_kernel(dist_side[j].y)*self.quadratic_kernel(dist_center[k].z)
+                    w = w_center[i].x * w_side[j].y * w_center[k].z
                     idx = (idx_center[i].x, idx_side[j].y, idx_center[k].z)
                     self.grid_velocity_y[idx] += vp.y * w
                     self.grid_weight_y[idx] += w
@@ -253,7 +255,7 @@ class HybridSimulator(object):
         for i in ti.static(range(3)):
             for j in ti.static(range(3)):
                 for k in ti.static(range(4)):
-                    w = self.quadratic_kernel(dist_center[i].x) * self.quadratic_kernel(dist_center[j].y)*self.quadratic_kernel(dist_side[k].z)
+                    w = w_center[i].x * w_center[j].y * w_side[k].z
                     idx = (idx_center[i].x, idx_center[j].y, idx_side[k].z)
                     self.grid_velocity_z[idx] += vp.z * w
                     self.grid_weight_z[idx] += w
