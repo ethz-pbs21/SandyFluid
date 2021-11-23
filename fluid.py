@@ -13,12 +13,13 @@ params = {
     'mac_cormack' : False,
     'gauss_seidel_max_iterations' : 1000,
     'gauss_seidel_min_accuracy' : 1e-5,
-
+    'grid_size' : (128, 128, 128),
+    'use_mgpcg' : True,
 }
 
-
-
-
+FLUID = 0
+AIR = 1
+SOLID = 2
 
 @ti.kernel
 def abs_vector(f1: ti.template(), f2: ti.template(), fout: ti.template()):
@@ -40,23 +41,22 @@ class HybridSimulator(object):
         # Body force (gravity)
         self.g = ti.Vector([0.0, 0.0, -9.8])
 
-        # 
-        self.gauss_seidel_max_iterations = int(gauss_seidel_max_iterations)
-        self.gauss_seidel_min_accuracy = gauss_seidel_min_accuracy
-
         self.paused = paused
 
         # parameters that are fixed (changing these after starting the simulatin will not have an effect!)
-        self.grid_size = ti.Vector(get_param('grid_size'))
+        self.grid_size = get_param('grid_size')
         self.inv_grid_size = 1.0 / ti.Vector
 
-        self.rho = 1.0 # todo: unit?
+        self.rho = 1000.0 # todo: unit?
         self.dx = 1.0 / self.grid_size[0]
 
         # simulation state
         self.cur_step = 0
         self.t = 0.0
         # self.r_wind = ti.Vector.field(1, ti.i32, shape=(1))
+
+        # pressure solver type
+        self.use_mgpcg = get_param('use_mgpcg')
 
         self.reset()
 
@@ -66,7 +66,10 @@ class HybridSimulator(object):
         self.particles_velocity = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
 
         # MAC grid
-        # self.pressure = ti.field(ti.f32, shape=self.resolution)
+        self.pressure = ti.field(ti.f32, shape=self.grid_size)
+        # mark each grid as FLUID = 0, AIR = 1 or SOLID = 2
+        self.celltype = ti.field(ti.i32, shape=self.grid_size)
+
         self.grid_velocity_x = ti.field(ti.f32, shape=(self.grid_size[0] + 1, self.grid_size[1], self.grid_size[2]))
         self.grid_velocity_y = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1] + 1, self.grid_size[2]))
         self.grid_velocity_z = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1], self.grid_size[2] + 1))
@@ -77,7 +80,17 @@ class HybridSimulator(object):
 
         # self.divergence = ti.field(ti.f32, shape=self.grid_size)
 
-
+    def init_solver(self):
+        # init pressure solver
+        if self.use_mgpcg:
+            self.mgpcg_solver = utils.MGPCGSolver(self.grid_size,
+                                            self.grid_velocity_x,
+                                            self.grid_velocity_y,
+                                            self.grid_velocity_z,
+                                            self.cell_type)
+        # else:
+        #     self.gauss_seidel_max_iterations = int(gauss_seidel_max_iterations)
+        #     self.gauss_seidel_min_accuracy = gauss_seidel_min_accuracy
 
 
     def reset(self):
@@ -110,6 +123,26 @@ class HybridSimulator(object):
 
         # Advect particles
         self.advect_particles()
+
+        # Mark grid cell type as FLUID, AIR or SOLID (boundary)
+        self.mark_cell_type()
+
+    # Helper
+    @ti.func
+    def is_valid(self, i, j, k):
+        return 0 <= i < self.grid_size[0] and 0 <= j < self.grid_size[1] and 0 <= k < self.grid_size[2]
+
+    @ti.func
+    def is_fluid(self, i, j, k):
+        return self.is_valid(i, j, k) and self.cell_type[i, j, k] == FLUID
+
+    @ti.func
+    def is_air(self, i, j, k):
+        return self.is_valid(i, j, k) and self.cell_type[i, j, k] == AIR
+
+    @ti.func
+    def is_solid(self, i, j, k):
+        return self.is_valid(i, j, k) and self.cell_type[i, j, k] == SOLID
 
     # ###########################################################
     # Kernels launched in one step
@@ -151,53 +184,74 @@ class HybridSimulator(object):
         gauss_seidel_max_iterations: ti.i32,
         gauss_seidel_min_accuracy: ti.f32,
     ):
+        if self.use_mgpcg:
+            scale_A = dt / (self.rho * self.dx ** 2)
+            scale_b = 1 / self.dx
 
-        # set Neumann boundary conditons
-        for y in range(0, self.grid_size[1]):
-            self.grid_velocity_x[0, y] = self.grid_velocity_x[2, y]
-            self.grid_velocity_x[-1, y] = self.grid_velocity_x[-3, y]
-        for x in range(0, self.grid_size[0]):
-            self.grid_velocity_y[x, 0] = self.grid_velocity_y[x, 2]
-            self.grid_velocity_y[x, -1] = self.grid_velocity_y[x, -3]
+            self.mgpcg_solver.system_init(scale_A, scale_b)
+            self.mgpcg_solver.solve(500)
 
-        # set tangential velocities along edges to zero
-        for x in range(0, self.grid_size[0] + 1):
-            self.grid_velocity_x[x, 0] = 0
-            self.grid_velocity_x[x, -1] = 0
-        for y in range(0, self.grid_size[1] + 1):
-            self.grid_velocity_y[0, y] = 0
-            self.grid_velocity_y[-1, y] = 0
-
-        # compute divergence
-        self.compute_divergence()
-
-        # copy border pressures
-        for y in range(0, self.grid_size[1] + 1):
-            self.pressure[0, y] = self.pressure[1, y]
-            self.pressure[-1, y] = self.pressure[-2, y]
-        for x in range(0, self.grid_size[0] + 1):
-            self.pressure[x, 0] = self.pressure[x, 1]
-            self.pressure[x, -1] = self.pressure[x, -2]
-
-        # solve possiion equation
-        gauss_seidel_poisson_solver(
-            self.pressure,
-            self.divergence,
-            dt,
-            self.dx,
-            gauss_seidel_max_iterations,
-            gauss_seidel_min_accuracy,
-            self.rho,
-        )
-
+            self.pressure.copy_from(self.mgpcg_solver.p)
+        # else:
+        #     # set Neumann boundary conditons
+        #     for y in range(0, self.grid_size[1]):
+        #         self.grid_velocity_x[0, y] = self.grid_velocity_x[2, y]
+        #         self.grid_velocity_x[-1, y] = self.grid_velocity_x[-3, y]
+        #     for x in range(0, self.grid_size[0]):
+        #         self.grid_velocity_y[x, 0] = self.grid_velocity_y[x, 2]
+        #         self.grid_velocity_y[x, -1] = self.grid_velocity_y[x, -3]
+        #
+        #     # set tangential velocities along edges to zero
+        #     for x in range(0, self.grid_size[0] + 1):
+        #         self.grid_velocity_x[x, 0] = 0
+        #         self.grid_velocity_x[x, -1] = 0
+        #     for y in range(0, self.grid_size[1] + 1):
+        #         self.grid_velocity_y[0, y] = 0
+        #         self.grid_velocity_y[-1, y] = 0
+        #
+        #     # compute divergence
+        #     self.compute_divergence()
+        #
+        #     # copy border pressures
+        #     for y in range(0, self.grid_size[1] + 1):
+        #         self.pressure[0, y] = self.pressure[1, y]
+        #         self.pressure[-1, y] = self.pressure[-2, y]
+        #     for x in range(0, self.grid_size[0] + 1):
+        #         self.pressure[x, 0] = self.pressure[x, 1]
+        #         self.pressure[x, -1] = self.pressure[x, -2]
+        #
+        #     # solve possiion equation
+        #     gauss_seidel_poisson_solver(
+        #         self.pressure,
+        #         self.divergence,
+        #         dt,
+        #         self.dx,
+        #         gauss_seidel_max_iterations,
+        #         gauss_seidel_min_accuracy,
+        #         self.rho,
+        #     )
 
     @ti.kernel
     def project_velocity(self, dt: ti.f32):
-        velocity_projection(
-            self.grid_velocity_x, self.grid_velocity_y, self.pressure, dt, self.dx
-        )
+        scale = dt / (self.rho * self.dx)
+        for i, j, k in ti.ndrange(self.grid_size[0], self.grid_size[1], self.grid_size[2]):
+            if self.is_fluid(i - 1, j, k) or self.is_fluid(i, j, k):
+                if self.is_solid(i - 1, j, k) or self.is_solid(i, j, k):
+                    self.grid_velocity_x[i, j, k] = 0 # u_solid = 0
+                else:
+                    self.grid_velocity_x[i, j, k] -= scale * (self.pressure[i, j, k] - self.pressure[i - 1, j, k])
 
+            if self.is_fluid(i, j - 1, k) or self.is_fluid(i, j, k):
+                if self.is_solid(i, j - 1, k) or self.is_solid(i, j, k):
+                    self.grid_velocity_y[i, j, k] = 0
+                else:
+                    self.grid_velocity_y[i, j, k] -= scale * (self.pressure[i, j, k] - self.pressure[i, j - 1, k])
 
+            if self.is_fluid(i, j, k - 1) or self.is_fluid(i, j, k):
+                if self.is_solid(i, j, k - 1) or self.is_solid(i, j, k):
+                    self.grid_velocity_z[i, j, k] = 0
+                else:
+                    self.grid_velocity_z[i, j, k] -= scale * (self.pressure[i, j, k] - self.pressure[i, j, k - 1])
 
 
     @ti.kernel
@@ -207,6 +261,19 @@ class HybridSimulator(object):
     @ti.kernel
     def advect_particles(self):
         pass
+
+    @ti.kernel
+    def mark_cell_type(self):
+        for i, j, k in self.cell_type:
+            if not self.is_solid(i, j, k):
+                self.cell_type[i, j, k] = AIR
+
+        for p in self.particles_position:
+            xp = self.particles_position[p]
+            idx = ti.cast(ti.floor(xp / self.dx), ti.i32)
+
+            if not self.is_solid(idx[0], idx[1], idx[2]):
+                self.cell_type[idx] = FLUID
 
     # ###########################################################
     # Funcs called by kernels
