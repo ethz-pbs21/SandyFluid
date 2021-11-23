@@ -51,7 +51,7 @@ class HybridSimulator(object):
         self.inv_grid_size = 1.0 / ti.Vector
 
         self.rho = 1.0 # todo: unit?
-        self.dx = 1.0 / self.resolution[0]
+        self.dx = 1.0 / self.grid_size[0]
 
         # simulation state
         self.cur_step = 0
@@ -67,11 +67,15 @@ class HybridSimulator(object):
 
         # MAC grid
         # self.pressure = ti.field(ti.f32, shape=self.resolution)
-        self.velocity_x = ti.field(ti.f32, shape=(self.resolution[0] + 1, self.resolution[1], self.resolution[2]))
-        self.velocity_y = ti.field(ti.f32, shape=(self.resolution[0], self.resolution[1] + 1, self.resolution[2]))
-        self.velocity_z = ti.field(ti.f32, shape=(self.resolution[0], self.resolution[1], self.resolution[2] + 1))
+        self.grid_velocity_x = ti.field(ti.f32, shape=(self.grid_size[0] + 1, self.grid_size[1], self.grid_size[2]))
+        self.grid_velocity_y = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1] + 1, self.grid_size[2]))
+        self.grid_velocity_z = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1], self.grid_size[2] + 1))
+        # For renormalization after p2g
+        self.grid_weight_x = ti.field(ti.f32, shape=(self.grid_size[0] + 1, self.grid_size[1], self.grid_size[2]))
+        self.grid_weight_y = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1] + 1, self.grid_size[2]))
+        self.grid_weight_z = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1], self.grid_size[2] + 1))
 
-        # self.divergence = ti.field(ti.f32, shape=self.resolution)
+        # self.divergence = ti.field(ti.f32, shape=self.grid_size)
 
 
 
@@ -122,7 +126,10 @@ class HybridSimulator(object):
             vp = self.particles_velocity[p]
             base = ti.floor(xp)
             frac = xp - base
-            self.interp_grid(base, frac)
+            self.interp_grid(base, frac, vp)
+
+        for i, j, k in self.grid_velocity_x:
+            self.grid_velocity_x[]
                 
     @ti.kernel
     def solve_pressure(
@@ -133,29 +140,29 @@ class HybridSimulator(object):
     ):
 
         # set Neumann boundary conditons
-        for y in range(0, self.resolution[1]):
-            self.velocity_x[0, y] = self.velocity_x[2, y]
-            self.velocity_x[-1, y] = self.velocity_x[-3, y]
-        for x in range(0, self.resolution[0]):
-            self.velocity_y[x, 0] = self.velocity_y[x, 2]
-            self.velocity_y[x, -1] = self.velocity_y[x, -3]
+        for y in range(0, self.grid_size[1]):
+            self.grid_velocity_x[0, y] = self.grid_velocity_x[2, y]
+            self.grid_velocity_x[-1, y] = self.grid_velocity_x[-3, y]
+        for x in range(0, self.grid_size[0]):
+            self.grid_velocity_y[x, 0] = self.grid_velocity_y[x, 2]
+            self.grid_velocity_y[x, -1] = self.grid_velocity_y[x, -3]
 
         # set tangential velocities along edges to zero
-        for x in range(0, self.resolution[0] + 1):
-            self.velocity_x[x, 0] = 0
-            self.velocity_x[x, -1] = 0
-        for y in range(0, self.resolution[1] + 1):
-            self.velocity_y[0, y] = 0
-            self.velocity_y[-1, y] = 0
+        for x in range(0, self.grid_size[0] + 1):
+            self.grid_velocity_x[x, 0] = 0
+            self.grid_velocity_x[x, -1] = 0
+        for y in range(0, self.grid_size[1] + 1):
+            self.grid_velocity_y[0, y] = 0
+            self.grid_velocity_y[-1, y] = 0
 
         # compute divergence
         self.compute_divergence()
 
         # copy border pressures
-        for y in range(0, self.resolution[1] + 1):
+        for y in range(0, self.grid_size[1] + 1):
             self.pressure[0, y] = self.pressure[1, y]
             self.pressure[-1, y] = self.pressure[-2, y]
-        for x in range(0, self.resolution[0] + 1):
+        for x in range(0, self.grid_size[0] + 1):
             self.pressure[x, 0] = self.pressure[x, 1]
             self.pressure[x, -1] = self.pressure[x, -2]
 
@@ -174,7 +181,7 @@ class HybridSimulator(object):
     @ti.kernel
     def project_velocity(self, dt: ti.f32):
         velocity_projection(
-            self.velocity_x, self.velocity_y, self.pressure, dt, self.dx
+            self.grid_velocity_x, self.grid_velocity_y, self.pressure, dt, self.dx
         )
 
     @ti.kernel
@@ -192,11 +199,64 @@ class HybridSimulator(object):
 
     # ###########################################################
     # Funcs called by kernels
+
+    # Spline functions for interpolation
+    # Input x should be non-negative (abs)
+
+    # Quadratic B-spline
+    # 0.75-x^2,         |x| in [0, 0.5)
+    # 0.5*(1.5-|x|)^2,  |x| in [0.5, 1.5)
+    # 0,                |x| in [1.5, inf)
     @ti.func
-    def interp_grid(self, base, frac):
-        # Quadratic B-spline
+    def quadratic_kernel(x : float):
+        if x < 0.5:
+            return 0.75 - x**2
+        elif x < 1.5:
+            return 0.5 * (1.5 - x)**2
+        else:
+            return 0.0
+
+
+    
+    @ti.func
+    def interp_grid(self, base : ti.Matrix, frac : ti.Matrix, vp : ti.Matrix):
+        
+        # Quadratic
         # todo: try other kernels (linear, cubic, ...)
-        w = [0.5*(1.5-frac) ** 2, 0.75 - (frac - 1.0) ** 2, 0.5 * (frac -0.5)**2]
+
+        # Index on sides
+        idx_side = [base-1, base, base+1, base+2]
+        # Distance to sides
+        dist_side = [1.0+frac, frac, 1.0-frac, 2.0-frac]
+        # Index on centers
+        idx_center = [base-1, base, base+1]
+        # Distance to centers
+        dist_center = [0.5+frac, ti.abs(0.5-frac), 1.5-frac]
+
+
+        for i in ti.static(range(4)):
+            for j in ti.static(range(3)):
+                for k in ti.static(range(3)):
+                    w = self.quadratic_kernel(dist_side[i].x) * self.quadratic_kernel(dist_center[j].y)*self.quadratic_kernel(dist_center[k].z)
+                    idx = (idx_side[i].x, idx_center[j].y, idx_center[k].z)
+                    self.grid_velocity_x[idx] += vp.x * w
+                    self.grid_weight_x[idx] += w
+
+        for i in ti.static(range(3)):
+            for j in ti.static(range(4)):
+                for k in ti.static(range(3)):
+                    w = self.quadratic_kernel(dist_center[i].x) * self.quadratic_kernel(dist_side[j].y)*self.quadratic_kernel(dist_center[k].z)
+                    idx = (idx_center[i].x, idx_side[j].y, idx_center[k].z)
+                    self.grid_velocity_y[idx] += vp.y * w
+                    self.grid_weight_y[idx] += w
+        
+        for i in ti.static(range(3)):
+            for j in ti.static(range(3)):
+                for k in ti.static(range(4)):
+                    w = self.quadratic_kernel(dist_center[i].x) * self.quadratic_kernel(dist_center[j].y)*self.quadratic_kernel(dist_side[k].z)
+                    idx = (idx_center[i].x, idx_center[j].y, idx_side[k].z)
+                    self.grid_velocity_z[idx] += vp.z * w
+                    self.grid_weight_z[idx] += w
 
 
     @ti.func
@@ -204,8 +264,8 @@ class HybridSimulator(object):
         for i, j, k in ti.ndrange(
             (1, self.grid_size[0] - 1), (1, self.grid_size[1] - 1), (1, self.grid_size[2] - 1)
         ):
-            dudx = (self.velocity_x[x + 1, y] - self.velocity_x[x, y]) / self.dx
-            dudy = (self.velocity_y[x, y + 1] - self.velocity_y[x, y]) / self.dx
+            dudx = (self.grid_velocity_x[x + 1, y] - self.grid_velocity_x[x, y]) / self.dx
+            dudy = (self.grid_velocity_y[x, y + 1] - self.grid_velocity_y[x, y]) / self.dx
             self.divergence[x, y] = dudx + dudy
 
 
@@ -240,7 +300,7 @@ class SimulationGUI(object):
         self.min_accuracy_slider.value = self.sim.gauss_seidel_min_accuracy
 
         self.scalar_field_to_render = "density"
-        self.field = ti.field(ti.f32, shape=self.sim.resolution)
+        self.field = ti.field(ti.f32, shape=self.sim.grid_size)
 
         # print controlls
         utils.print_pbs_logo()
@@ -274,13 +334,13 @@ class SimulationGUI(object):
             field = self.sim.divergence.to_numpy()
         elif self.scalar_field_to_render == "vorticity":
             field = self.sim.vorticity.to_numpy()
-        elif self.scalar_field_to_render == "velocity_x":
-            field = self.sim.velocity_x.to_numpy()
-        elif self.scalar_field_to_render == "velocity_y":
-            field = self.sim.velocity_y.to_numpy()
+        elif self.scalar_field_to_render == "grid_velocity_x":
+            field = self.sim.grid_velocity_x.to_numpy()
+        elif self.scalar_field_to_render == "grid_velocity_y":
+            field = self.sim.grid_velocity_y.to_numpy()
         elif self.scalar_field_to_render == "velocity_abs":
-            vx = self.sim.velocity_x.to_numpy()[:-1, :]
-            vy = self.sim.velocity_y.to_numpy()[:, :-1]
+            vx = self.sim.grid_velocity_x.to_numpy()[:-1, :]
+            vy = self.sim.grid_velocity_y.to_numpy()[:, :-1]
             field = np.sqrt(np.power(vx, 2) + np.power(vy, 2))
         elif self.scalar_field_to_render == "force_x":
             field = self.sim.force_x.to_numpy()
@@ -355,9 +415,9 @@ class SimulationGUI(object):
         elif event.key == "4":
             self.scalar_field_to_render = "vorticity"
         elif event.key == "5":
-            self.scalar_field_to_render = "velocity_x"
+            self.scalar_field_to_render = "grid_velocity_x"
         elif event.key == "6":
-            self.scalar_field_to_render = "velocity_y"
+            self.scalar_field_to_render = "grid_velocity_y"
         elif event.key == "7":
             self.scalar_field_to_render = "velocity_abs"
         elif event.key == "8":
