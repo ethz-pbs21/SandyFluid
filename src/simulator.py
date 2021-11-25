@@ -1,19 +1,19 @@
 # Based on code provided in Exercise 4
 
-from os import stat
-from typing import Tuple
-from numpy.core.fromnumeric import shape
 import taichi as ti
-from taichi.misc.gui import rgb_to_hex
 import numpy as np
-import utils
 
+# Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 params = {
-    'dt' : 0.045,   # Time step
+    'dt' : 0.045,                               # Time step
+    'g' : (0.0, 0.0, -9.8),                     # Body force
+    'rho': 1000.0,                              # Density of the fluid
+    'grid_size' : (64, 64, 64),                 # Grid size (integer)
+    'cell_extent': 0.01,                        # Extent of a single cell. grid_extent equals to the product of grid_size and cell_extent
+
     'mac_cormack' : False,
     'gauss_seidel_max_iterations' : 1000,
     'gauss_seidel_min_accuracy' : 1e-5,
-    'grid_size' : (128, 128, 128),
     'use_mgpcg' : True,
 }
 
@@ -39,16 +39,19 @@ class Simulator(object):
         # Time step
         self.dt = get_param('dt')
         # Body force (gravity)
-        self.g = ti.Vector([0.0, 0.0, -9.8])
+        self.g = np.array(get_param('g'), dtype=np.float32)
 
-        self.paused = paused
+        self.paused = True
 
         # parameters that are fixed (changing these after starting the simulatin will not have an effect!)
-        self.grid_size = get_param('grid_size')
-        self.inv_grid_size = 1.0 / ti.Vector
+        self.grid_size = np.array(get_param('grid_size'), dtype=np.int32)
+        self.inv_grid_size = 1.0 / self.grid_size.astype(np.float32)
+        self.cell_extent = get_param('cell_extent')
+        self.grid_extent = self.grid_size.astype(np.float32) * self.cell_extent
+        self.dx = 1.0 / self.grid_size[0] # todo
 
-        self.rho = 1000.0 # todo: unit?
-        self.dx = 1.0 / self.grid_size[0]
+        self.rho = get_param('rho')
+        
 
         # simulation state
         self.cur_step = 0
@@ -58,13 +61,12 @@ class Simulator(object):
         # pressure solver type
         self.use_mgpcg = get_param('use_mgpcg')
 
+        self.init_fields()
+        self.init_particles((16, 16, 32), (48, 48, 64))  # todo
+
         self.reset()
 
     def init_fields(self):
-        # Particles
-        self.particles_position = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
-        self.particles_velocity = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
-
         # MAC grid
         self.pressure = ti.field(ti.f32, shape=self.grid_size)
         # mark each grid as FLUID = 0, AIR = 1 or SOLID = 2
@@ -79,6 +81,29 @@ class Simulator(object):
         self.grid_weight_z = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1], self.grid_size[2] + 1))
 
         # self.divergence = ti.field(ti.f32, shape=self.grid_size)
+
+    # todo: this is only a very naive particle init method: just select a portion of the grid and fill one particle for each cell
+
+    def init_particles(self, range_min, range_max):
+        range_min = np.max(np.array(range_min), 0)
+        range_max = np.min(np.arrag(range_max), self.grid_size)
+        self.num_particles = (range_max-range_min).prod()
+
+        # Particles
+        self.particles_position = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
+        self.particles_velocity = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
+
+        self.init_particles_kernel(ti.Vector(range_min), ti.Vector(range_max))
+
+
+    @ti.kernel
+    def init_particles_kernel(self, range_min, range_max):
+        particle_init_size = range_max - range_min
+        for p in self.particles_position:
+            k = p % (particle_init_size.z * particle_init_size.y) + range_min.z
+            j = (p // particle_init_size.z) % particle_init_size.y + range_min.y
+            i = p / (particle_init_size.z * particle_init_size.y) + range_min.x
+            self.particles_position[p] = (ti.Vector([i,j,k]) + 0.5) * self.cell_extent
 
     def init_solver(self):
         # init pressure solver

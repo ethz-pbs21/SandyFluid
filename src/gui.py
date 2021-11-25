@@ -1,22 +1,25 @@
 import taichi as ti
 from simulator import Simulator
+import numpy as np
 
 @ti.data_oriented
 class SimulationGUI(object):
-    def __init__(
-        self,
-        sim: Simulator,
-        title: str = "Simulator",
-        window_resolution=(640, 960)) -> None:
+    def __init__(self, sim: Simulator, title: str = "Simulator", resolution=(640, 960)) -> None:
         super().__init__()
 
         self.sim = sim
-        self.window_resolution = window_resolution
-        
-        self.window = ti.ui.Window(title, window_resolution)
+
+        self.bound_min = np.arary([0.0,0.0,0.0], dtype=np.float32)
+        self.bound_max = self.sim.grid_extent
+        self.bound_extent = self.bound_max - self.bound_min
+        self.bound_center = 0.5 * self.bound_extent + self.bound_min
+        # Particle visualization radius
+        self.p_radius = self.sim.cell_extent * 0.5
+
+        self.resolution = resolution
+        self.window = ti.ui.Window(title, resolution)
         self.canvas = self.window.get_canvas()
         self.scene = ti.ui.Scene()
-
         self.camera = ti.ui.make_camera()
         self.reset_camera()
 
@@ -47,23 +50,29 @@ class SimulationGUI(object):
 
 
     def reset_camera(self):
-        self.sim.
-        self.camera.position()
+        # Offset the camera position from the center of the bound along -Y
+        self.camera.position(self.bound_center[0], self.bound_center[1] - self.bound_extent[1], self.bound_center[2])
+        self.camera.lookat(self.bound_center[0], self.bound_center[1], self.bound_center[2])
+        self.camera.up(0.0, 0.0, 1.0)
+        # self.camera.fov() # todo: compute this
+        # self.camera.projection_mode()
+        self.scene.set_camera(self.camera)
 
     def render(self):
+        # todo: support resize Window
 
-        img = ti.imresize(field, *self.window_resolution)
-        self.gui.set_image(img)
+        # This seems to be a bug... If no point light exists then interal error would occur
+        self.scene.point_light(pos=(0, 0, 0), color=(0, 0, 0))
+        # Use the ambient light to see the particles
+        self.scene.ambient_light((1, 1, 1))
+        # Draw the particles
+        self.scene.particles(self.sim.particles_position, radius=self.p_radius)
 
-        self.gui.rect(topleft=[0, 1], bottomright=[1, 0])
-
-        self.gui.circles()
-        self.gui.line
-
-
+        self.canvas.scene(self.scene)
+        self.window.show()
 
     def run(self):
-        while self.gui.running:
+        while self.window.running:
 
             # handle user input
             for e in self.gui.get_events(ti.GUI.PRESS):
@@ -98,7 +107,6 @@ class SimulationGUI(object):
 
             # update gui
             self.render()
-            self.gui.show()
 
     def gui_event_callback(self, event):
         if event.key == " ":
