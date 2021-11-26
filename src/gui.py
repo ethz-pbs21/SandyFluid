@@ -68,6 +68,9 @@ class SimulationGUI(object):
         # Draw the particles
         self.scene.particles(self.sim.particles_position, radius=self.p_radius)
 
+        # todo: draw the line of the edges of the bound
+        # self.scene.
+
         self.canvas.scene(self.scene)
         self.window.show()
 
@@ -80,8 +83,6 @@ class SimulationGUI(object):
 
             # update sim parameters
             self.sim.dt = self.time_step_slider.value
-            self.sim.wind_strength = self.wind_slider.value
-            self.sim.vorticity_strength = self.vorticity_slider.value
             self.sim.gauss_seidel_max_iterations = int(self.max_iterations_slider.value)
             self.max_iterations_slider.value = self.sim.gauss_seidel_max_iterations
             self.sim.gauss_seidel_min_accuracy = self.min_accuracy_slider.value

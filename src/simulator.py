@@ -2,6 +2,7 @@
 
 import taichi as ti
 import numpy as np
+from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 params = {
@@ -33,8 +34,6 @@ class Simulator(object):
         def get_param(key:str, default_val=None):
             return params[key] if key in params else default_val
 
-        # Number of particles
-        self.num_particles = # todo
 
         # Time step
         self.dt = get_param('dt')
@@ -82,11 +81,12 @@ class Simulator(object):
 
         # self.divergence = ti.field(ti.f32, shape=self.grid_size)
 
-    # todo: this is only a very naive particle init method: just select a portion of the grid and fill one particle for each cell
-
+    # todo: this is only a very naive particle init method:
+    # it just select a portion of the grid and fill one particle for each cell
     def init_particles(self, range_min, range_max):
         range_min = np.max(np.array(range_min), 0)
         range_max = np.min(np.arrag(range_max), self.grid_size)
+        # Number of particles
         self.num_particles = (range_max-range_min).prod()
 
         # Particles
@@ -108,7 +108,7 @@ class Simulator(object):
     def init_solver(self):
         # init pressure solver
         if self.use_mgpcg:
-            self.mgpcg_solver = utils.MGPCGSolver(self.grid_size,
+            self.mgpcg_solver = MGPCGSolver(self.grid_size,
                                             self.grid_velocity_x,
                                             self.grid_velocity_y,
                                             self.grid_velocity_z,
@@ -194,7 +194,7 @@ class Simulator(object):
             self.grid_velocity_z[i, j, k] /= self.grid_weight_z[i,j,k]
 
     @ti.kernel
-    def g2p():
+    def g2p(self):
         for p in self.particles_position:
             xp = self.particles_position[p]
             vp = self.particles_velocity[p]
@@ -325,7 +325,6 @@ class Simulator(object):
     
     @ti.func
     def interp_grid(self, base : ti.Matrix, frac : ti.Matrix, vp : ti.Matrix):
-        
         # Quadratic
         # todo: try other kernels (linear, cubic, ...)
 
@@ -337,7 +336,6 @@ class Simulator(object):
         idx_center = [base-1, base, base+1]
         # Weight on centers
         w_center = [self.quadratic_kernel(0.5+frac), self.quadratic_kernel(ti.abs(0.5-frac)), self.quadratic_kernel(1.5-frac)]
-
 
         for i in ti.static(range(4)):
             for j in ti.static(range(3)):
@@ -365,16 +363,26 @@ class Simulator(object):
 
     @ti.func
     def interp_particle(self, base : ti.Matrix, frac : ti.Matrix, p):
-        pass
+        # Index on sides
+        idx_side = [base-1, base, base+1, base+2]
+        # Weight on sides
+        w_side = [self.quadratic_kernel(1.0+frac), self.quadratic_kernel(frac), self.quadratic_kernel(1.0-frac), self.quadratic_kernel(2.0-frac)]
+        # Index on centers
+        idx_center = [base-1, base, base+1]
+        # Weight on centers
+        w_center = [self.quadratic_kernel(0.5+frac), self.quadratic_kernel(ti.abs(0.5-frac)), self.quadratic_kernel(1.5-frac)]
 
-    @ti.func
-    def compute_divergence(self):
-        for i, j, k in ti.ndrange(
-            (1, self.grid_size[0] - 1), (1, self.grid_size[1] - 1), (1, self.grid_size[2] - 1)
-        ):
-            dudx = (self.grid_velocity_x[x + 1, y] - self.grid_velocity_x[x, y]) / self.dx
-            dudy = (self.grid_velocity_y[x, y + 1] - self.grid_velocity_y[x, y]) / self.dx
-            self.divergence[x, y] = dudx + dudy
+        for p in self.particles_velocity:
+            
+
+    # @ti.func
+    # def compute_divergence(self):
+    #     for i, j, k in ti.ndrange(
+    #         (1, self.grid_size[0] - 1), (1, self.grid_size[1] - 1), (1, self.grid_size[2] - 1)
+    #     ):
+    #         dudx = (self.grid_velocity_x[x + 1, y] - self.grid_velocity_x[x, y]) / self.dx
+    #         dudy = (self.grid_velocity_y[x, y + 1] - self.grid_velocity_y[x, y]) / self.dx
+    #         self.divergence[x, y] = dudx + dudy
 
 
 
