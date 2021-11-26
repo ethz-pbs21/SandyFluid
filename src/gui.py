@@ -1,9 +1,11 @@
 import taichi as ti
 from simulator import Simulator
+import time
+
 
 @ti.data_oriented
 class SimulationGUI(object):
-    def __init__(self, sim: Simulator, title: str = "Simulator", resolution=(640, 960)) -> None:
+    def __init__(self, sim: Simulator, title: str = "Simulator", resolution=(800, 600)) -> None:
         super().__init__()
 
         self.sim = sim
@@ -16,13 +18,13 @@ class SimulationGUI(object):
         self.p_radius = self.sim.cell_extent * 0.5
 
         self.resolution = resolution
-        self.window = ti.ui.Window(title, resolution)
+        self.window = ti.ui.Window(title, resolution, vsync=True)
         self.canvas = self.window.get_canvas()
         self.scene = ti.ui.Scene()
         self.camera = ti.ui.make_camera()
         self.reset_camera()
 
-
+        self.reset()
         # self.time_step_slider = self.gui.slider("Time step (t)", 1e-6, 3)
         # self.time_step_slider.value = self.sim.dt
         #
@@ -47,6 +49,9 @@ class SimulationGUI(object):
         # print("a/A:\tIncrement/decrement Gauss-Seidel min accuracy")
         # print("")
 
+    def reset(self):
+        self.t_sim = 0.0
+        self.t_render = 0.0
 
     def reset_camera(self):
         # Offset the camera position from the center of the bound along -Y
@@ -56,6 +61,9 @@ class SimulationGUI(object):
         # self.camera.fov() # todo: compute this
         # self.camera.projection_mode()
         self.scene.set_camera(self.camera)
+
+    # def draw_center(self):
+    #     center
 
     def render(self):
         # todo: support resize Window
@@ -102,11 +110,18 @@ class SimulationGUI(object):
             #     end="   \r",
             # )
 
+
             # run simulation step
             self.sim.step()
+            self.t_sim = self.sim.t
 
-            # update gui
-            self.render()
+
+            while self.t_render < self.t_sim:
+                t_render_beg = time.time()
+                # update gui
+                self.render()
+                t_render_end = time.time()
+                self.t_render += t_render_end - t_render_beg
 
     # def gui_event_callback(self, event):
     #     if event.key == " ":

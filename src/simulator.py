@@ -5,11 +5,11 @@ from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'dt' : 0.045,                               # Time step
+    'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
     'grid_size' : (64, 64, 64),                 # Grid size (integer)
-    'cell_extent': 0.01,                        # Extent of a single cell. grid_extent equals to the product of grid_size and cell_extent
+    'cell_extent': 0.1,                        # Extent of a single cell. grid_extent equals to the product of grid_size and cell_extent
 
     'mac_cormack' : False,
     'gauss_seidel_max_iterations' : 1000,
@@ -133,9 +133,10 @@ class Simulator(object):
 
         # Apply body force
         self.apply_force()
+        print(self.particles_velocity[self.num_particles//2])
 
         # Scatter properties (mainly velocity) from particle to grid
-        self.p2g()
+        # self.p2g()
 
         # Solve the poisson equation to get pressure
         # self.solve_pressure()
@@ -144,13 +145,16 @@ class Simulator(object):
         # self.project_velocity()
 
         # Gather properties (mainly velocity) from grid to particle
-        self.g2p()
+        # self.g2p()
+
+
+        # Advect particles
+        self.advect_particles()
 
         # Enforce boundary condition
         self.enforce_boundary_condition()
 
-        # Advect particles
-        self.advect_particles()
+        print(self.particles_position[self.num_particles//2])
 
         # Mark grid cell type as FLUID, AIR or SOLID (boundary)
         # self.mark_cell_type()
@@ -183,9 +187,9 @@ class Simulator(object):
     @ti.kernel
     def p2g(self):
         for p in self.particles_position:
-            xp = self.particles_position[p]
+            xp = self.particles_position[p] / self.cell_extent
             vp = self.particles_velocity[p]
-            base = ti.floor(xp)
+            base = ti.floor(xp).cast(ti.i32)
             frac = xp - base
             self.interp_grid(base, frac, vp)
 
@@ -199,9 +203,8 @@ class Simulator(object):
     @ti.kernel
     def g2p(self):
         for p in self.particles_position:
-            xp = self.particles_position[p]
-            vp = self.particles_velocity[p]
-            base = ti.floor(xp)
+            xp = self.particles_position[p] / self.grid_extent
+            base = ti.floor(xp).cast(ti.i32)
             frac = xp - base
             self.interp_particle(base, frac, p)
 
@@ -290,12 +293,11 @@ class Simulator(object):
         # todo: RK2
         for p in self.particles_position:
             self.particles_position[p] += self.particles_velocity[p] * self.dt
-            # todo: boundary condition, for velocity
-            self.particles_position[p] = ti.min(ti.max(self.particles_position[p], 0), self.grid_extent)
 
     @ti.kernel
     def enforce_boundary_condition(self):
-        pass
+        for p in self.particles_position:
+            self.particles_position[p] = ti.min(ti.max(self.particles_position[p], ti.Vector([0.0,0.0,0.0])), self.grid_extent)
 
     @ti.kernel
     def mark_cell_type(self):
