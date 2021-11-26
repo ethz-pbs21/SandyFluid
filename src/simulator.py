@@ -153,7 +153,7 @@ class Simulator(object):
         self.advect_particles()
 
         # Mark grid cell type as FLUID, AIR or SOLID (boundary)
-        self.mark_cell_type()
+        # self.mark_cell_type()
 
     # Helper
     @ti.func
