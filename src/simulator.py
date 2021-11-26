@@ -162,10 +162,10 @@ class Simulator(object):
         # self.p2g()
 
         # Solve the poisson equation to get pressure
-        self.solve_pressure()
+        # self.solve_pressure()
 
         # Accelerate velocity using the solved pressure
-        self.project_velocity()
+        # self.project_velocity()
 
         # Gather properties (mainly velocity) from grid to particle
         # self.g2p()
