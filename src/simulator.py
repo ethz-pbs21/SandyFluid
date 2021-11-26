@@ -5,7 +5,7 @@ import numpy as np
 from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
-params = {
+global_params = {
     'dt' : 0.045,                               # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
@@ -30,7 +30,7 @@ def abs_vector(f1: ti.template(), f2: ti.template(), fout: ti.template()):
 
 @ti.data_oriented
 class Simulator(object):
-    def __init__(self, params : dict):
+    def __init__(self, params : dict = global_params):
         def get_param(key:str, default_val=None):
             return params[key] if key in params else default_val
 
@@ -61,6 +61,7 @@ class Simulator(object):
         self.use_mgpcg = get_param('use_mgpcg')
 
         self.init_fields()
+
         self.init_particles((16, 16, 32), (48, 48, 64))  # todo
 
         self.reset()
@@ -93,11 +94,13 @@ class Simulator(object):
         self.particles_position = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
         self.particles_velocity = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
 
-        self.init_particles_kernel(ti.Vector(range_min), ti.Vector(range_max))
+        self.init_particles_kernel(range_min[0], range_min[1], range_min[2], range_max[0], range_max[1], range_max[2])
 
 
     @ti.kernel
-    def init_particles_kernel(self, range_min, range_max):
+    def init_particles_kernel(self, range_min_x:ti.i32, range_min_y:ti.i32,range_min_z:ti.i32,range_max_x:ti.i32,range_max_y:ti.i32,range_max_z:ti.i32):
+        range_min = ti.Vector([range_min_x, range_min_y, range_min_z])
+        range_max = ti.Vector([range_max_x, range_max_y, range_max_z])
         particle_init_size = range_max - range_min
         for p in self.particles_position:
             k = p % (particle_init_size.z * particle_init_size.y) + range_min.z
@@ -279,12 +282,19 @@ class Simulator(object):
                     self.grid_velocity_z[i, j, k] -= scale * (self.pressure[i, j, k] - self.pressure[i, j, k - 1])
 
 
-    @ti.kernel
-    def enforce_boundary_condition(self):
-        pass
+
 
     @ti.kernel
     def advect_particles(self):
+        # Forward Euler
+        # todo: RK2
+        for p in self.particles_position:
+            self.particles_position[p] += self.particles_velocity[p] * self.dt
+            # todo: boundary condition, for velocity
+            self.particles_position[p] = ti.min(ti.max(self.particles_position[p], 0), self.grid_extent)
+
+    @ti.kernel
+    def enforce_boundary_condition(self):
         pass
 
     @ti.kernel
@@ -372,8 +382,34 @@ class Simulator(object):
         # Weight on centers
         w_center = [self.quadratic_kernel(0.5+frac), self.quadratic_kernel(ti.abs(0.5-frac)), self.quadratic_kernel(1.5-frac)]
 
-        for p in self.particles_velocity:
-            
+        weight = 0.0
+        velocity = ti.Vector([0.0, 0.0, 0.0])
+
+        for i in ti.static(range(4)):
+            for j in ti.static(range(3)):
+                for k in ti.static(range(3)):
+                    w = w_side[i].x * w_center[j].y * w_center[k].z
+                    idx = (idx_side[i].x, idx_center[j].y, idx_center[k].z)
+                    velocity += self.grid_velocity_x[idx] * w
+                    weight += w
+
+        for i in ti.static(range(3)):
+            for j in ti.static(range(4)):
+                for k in ti.static(range(3)):
+                    w = w_center[i].x * w_side[j].y * w_center[k].z
+                    idx = (idx_center[i].x, idx_side[j].y, idx_center[k].z)
+                    velocity += self.grid_velocity_y[idx] * w
+                    weight += w
+
+        for i in ti.static(range(3)):
+            for j in ti.static(range(3)):
+                for k in ti.static(range(4)):
+                    w = w_center[i].x * w_center[j].y * w_side[k].z
+                    idx = (idx_center[i].x, idx_center[j].y, idx_side[k].z)
+                    velocity += self.grid_velocity_z[idx] * w
+                    weight += w
+
+        self.particles_velocity[p] = velocity / weight
 
     # @ti.func
     # def compute_divergence(self):
