@@ -43,10 +43,11 @@ class Simulator(object):
 
         # parameters that are fixed (changing these after starting the simulatin will not have an effect!)
         self.grid_size = ti.Vector(get_param('grid_size'), dt=ti.i32)
-        self.inv_grid_size = 1.0 / self.grid_size
+        # self.inv_grid_size = 1.0 / self.grid_size
         self.cell_extent = get_param('cell_extent')
         self.grid_extent = self.grid_size * self.cell_extent
-        self.dx = 1.0 / self.grid_size[0] # todo
+        # self.dx = 1.0 / self.grid_size[0] # todo
+        self.dx = self.cell_extent
 
         self.rho = get_param('rho')
         
@@ -56,20 +57,37 @@ class Simulator(object):
         self.t = 0.0
         # self.r_wind = ti.Vector.field(1, ti.i32, shape=(1))
 
-        # pressure solver type
-        self.use_mgpcg = get_param('use_mgpcg')
-
         self.init_fields()
 
         self.init_particles((16, 16, 32), (48, 48, 64))  # todo
+
+        # pressure solver type
+        self.use_mgpcg = get_param('use_mgpcg')
+        self.init_solver()
 
         self.reset()
 
     def init_fields(self):
         # MAC grid
         self.pressure = ti.field(ti.f32, shape=self.grid_size)
+
         # mark each grid as FLUID = 0, AIR = 1 or SOLID = 2
-        self.celltype = ti.field(ti.i32, shape=self.grid_size)
+        self.cell_type = ti.field(ti.i32, shape=self.grid_size)
+        self.cell_type.fill(AIR)
+        for i in range(self.grid_size[0]):
+            for j in range(self.grid_size[1]):
+                self.cell_type[i, j, 0] = SOLID
+                self.cell_type[i, j, self.grid_size[2]-1] = SOLID
+
+        for j in range(self.grid_size[1]):
+            for k in range(self.grid_size[2]):
+                self.cell_type[0, j, k] = SOLID
+                self.cell_type[self.grid_size[0]-1, j, k] = SOLID
+
+        for i in range(self.grid_size[0]):
+            for k in range(self.grid_size[2]):
+                self.cell_type[i, 0, k] = SOLID
+                self.cell_type[i, self.grid_size[1]-1, k] = SOLID
 
         self.grid_velocity_x = ti.field(ti.f32, shape=(self.grid_size[0] + 1, self.grid_size[1], self.grid_size[2]))
         self.grid_velocity_y = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1] + 1, self.grid_size[2]))
@@ -86,9 +104,10 @@ class Simulator(object):
     def init_particles(self, range_min, range_max):
         range_min = ti.max(ti.Vector(range_min), 0)
         range_max = ti.min(ti.Vector(range_max), self.grid_size)
+
         # Number of particles
-        range = range_max - range_min
-        self.num_particles = range.x * range.y * range.z
+        range_size = range_max - range_min
+        self.num_particles = range_size.x * range_size.y * range_size.z
 
         # Particles
         self.particles_position = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
@@ -96,6 +115,10 @@ class Simulator(object):
 
         self.init_particles_kernel(range_min[0], range_min[1], range_min[2], range_max[0], range_max[1], range_max[2])
 
+        for i in range(range_max[0] - range_min[0]):
+            for j in range(range_max[1] - range_min[1]):
+                for k in range(range_max[2] - range_min[2]):
+                    self.cell_type[i+range_min[0], j+range_min[1], k+range_min[2]] = FLUID
 
     @ti.kernel
     def init_particles_kernel(self, range_min_x:ti.i32, range_min_y:ti.i32,range_min_z:ti.i32,range_max_x:ti.i32,range_max_y:ti.i32,range_max_z:ti.i32):
@@ -139,10 +162,10 @@ class Simulator(object):
         # self.p2g()
 
         # Solve the poisson equation to get pressure
-        # self.solve_pressure()
+        self.solve_pressure()
 
         # Accelerate velocity using the solved pressure
-        # self.project_velocity()
+        self.project_velocity()
 
         # Gather properties (mainly velocity) from grid to particle
         # self.g2p()
@@ -157,7 +180,7 @@ class Simulator(object):
         print(self.particles_position[self.num_particles//2])
 
         # Mark grid cell type as FLUID, AIR or SOLID (boundary)
-        # self.mark_cell_type()
+        self.mark_cell_type()
 
     # Helper
     @ti.func
@@ -187,9 +210,9 @@ class Simulator(object):
     @ti.kernel
     def p2g(self):
         for p in self.particles_position:
-            xp = self.particles_position[p] / self.cell_extent
+            xp = self.particles_position[p]
             vp = self.particles_velocity[p]
-            base = ti.floor(xp).cast(ti.i32)
+            base = ti.cast(ti.floor(xp/self.dx), dtype=ti.int32)
             frac = xp - base
             self.interp_grid(base, frac, vp)
 
@@ -203,24 +226,20 @@ class Simulator(object):
     @ti.kernel
     def g2p(self):
         for p in self.particles_position:
-            xp = self.particles_position[p] / self.grid_extent
-            base = ti.floor(xp).cast(ti.i32)
+            xp = self.particles_position[p]
+            vp = self.particles_velocity[p]
+            base = ti.cast(ti.floor(xp/self.dx), dtype=ti.int32)
             frac = xp - base
             self.interp_particle(base, frac, p)
 
-    @ti.kernel
-    def solve_pressure(
-        self,
-        dt: ti.f32,
-        gauss_seidel_max_iterations: ti.i32,
-        gauss_seidel_min_accuracy: ti.f32,
-    ):
+    # @ti.kernel
+    def solve_pressure(self):
         if self.use_mgpcg:
-            scale_A = dt / (self.rho * self.dx ** 2)
+            scale_A = self.dt / (self.rho * self.dx ** 2)
             scale_b = 1 / self.dx
 
             self.mgpcg_solver.system_init(scale_A, scale_b)
-            self.mgpcg_solver.solve(500)
+            self.mgpcg_solver.solve(100)
 
             self.pressure.copy_from(self.mgpcg_solver.p)
         # else:
@@ -263,8 +282,8 @@ class Simulator(object):
         #     )
 
     @ti.kernel
-    def project_velocity(self, dt: ti.f32):
-        scale = dt / (self.rho * self.dx)
+    def project_velocity(self):
+        scale = self.dt / (self.rho * self.dx)
         for i, j, k in ti.ndrange(self.grid_size[0], self.grid_size[1], self.grid_size[2]):
             if self.is_fluid(i - 1, j, k) or self.is_fluid(i, j, k):
                 if self.is_solid(i - 1, j, k) or self.is_solid(i, j, k):
@@ -292,7 +311,22 @@ class Simulator(object):
         # Forward Euler
         # todo: RK2
         for p in self.particles_position:
-            self.particles_position[p] += self.particles_velocity[p] * self.dt
+            pos = self.particles_position[p]
+            v = self.particles_velocity[p]
+            pos += v * self.dt
+            # todo: boundary condition, for velocity
+            # self.particles_position[p] = ti.min(ti.max(self.particles_position[p], 0), self.grid_extent)
+
+            for i in ti.static(range(3)):
+                if pos[i] <= self.cell_extent:
+                    pos[i] = self.cell_extent
+                    v[i] = 0
+                if pos[i] >= self.grid_extent[i]-self.cell_extent:
+                    pos[i] = self.grid_extent[i]-self.cell_extent
+                    v[i] = 0
+
+            self.particles_position[p] = pos
+            self.particles_velocity[p] = v
 
     @ti.kernel
     def enforce_boundary_condition(self):
