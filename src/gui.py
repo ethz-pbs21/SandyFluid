@@ -1,6 +1,5 @@
 import taichi as ti
 from simulator import Simulator
-import numpy as np
 
 @ti.data_oriented
 class SimulationGUI(object):
@@ -9,7 +8,7 @@ class SimulationGUI(object):
 
         self.sim = sim
 
-        self.bound_min = np.arary([0.0,0.0,0.0], dtype=np.float32)
+        self.bound_min = ti.Vector([0.0,0.0,0.0], dt=ti.f32)
         self.bound_max = self.sim.grid_extent
         self.bound_extent = self.bound_max - self.bound_min
         self.bound_center = 0.5 * self.bound_extent + self.bound_min

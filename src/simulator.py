@@ -1,7 +1,6 @@
 # Based on code provided in Exercise 4
 
 import taichi as ti
-import numpy as np
 from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
@@ -38,15 +37,15 @@ class Simulator(object):
         # Time step
         self.dt = get_param('dt')
         # Body force (gravity)
-        self.g = np.array(get_param('g'), dtype=np.float32)
+        self.g = ti.Vector(get_param('g'), dt=ti.f32)  # todo: Datatype decl seems to be noneffective here...
 
         self.paused = True
 
         # parameters that are fixed (changing these after starting the simulatin will not have an effect!)
-        self.grid_size = np.array(get_param('grid_size'), dtype=np.int32)
-        self.inv_grid_size = 1.0 / self.grid_size.astype(np.float32)
+        self.grid_size = ti.Vector(get_param('grid_size'), dt=ti.i32)
+        self.inv_grid_size = 1.0 / self.grid_size
         self.cell_extent = get_param('cell_extent')
-        self.grid_extent = self.grid_size.astype(np.float32) * self.cell_extent
+        self.grid_extent = self.grid_size * self.cell_extent
         self.dx = 1.0 / self.grid_size[0] # todo
 
         self.rho = get_param('rho')
@@ -85,10 +84,11 @@ class Simulator(object):
     # todo: this is only a very naive particle init method:
     # it just select a portion of the grid and fill one particle for each cell
     def init_particles(self, range_min, range_max):
-        range_min = np.max(np.array(range_min), 0)
-        range_max = np.min(np.arrag(range_max), self.grid_size)
+        range_min = ti.max(ti.Vector(range_min), 0)
+        range_max = ti.min(ti.Vector(range_max), self.grid_size)
         # Number of particles
-        self.num_particles = (range_max-range_min).prod()
+        range = range_max - range_min
+        self.num_particles = range.x * range.y * range.z
 
         # Particles
         self.particles_position = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
@@ -127,9 +127,9 @@ class Simulator(object):
         self.t = 0.0
 
 
-    def step(self, dt):
+    def step(self):
         self.cur_step += 1
-        self.t += dt
+        self.t += self.dt
 
         # Apply body force
         self.apply_force()
@@ -321,7 +321,7 @@ class Simulator(object):
     # 0.5*(1.5-|x|)^2,  |x| in [0.5, 1.5)
     # 0,                |x| in [1.5, inf)
     @ti.func
-    def quadratic_kernel(x : ti.Matrix):
+    def quadratic_kernel(x):
         w = x.copy()
         for i, xi in enumerate(x):
             if xi < 0.5:
@@ -334,7 +334,7 @@ class Simulator(object):
 
     
     @ti.func
-    def interp_grid(self, base : ti.Matrix, frac : ti.Matrix, vp : ti.Matrix):
+    def interp_grid(self, base, frac, vp):
         # Quadratic
         # todo: try other kernels (linear, cubic, ...)
 
@@ -372,7 +372,7 @@ class Simulator(object):
                     self.grid_weight_z[idx] += w
 
     @ti.func
-    def interp_particle(self, base : ti.Matrix, frac : ti.Matrix, p):
+    def interp_particle(self, base, frac, p):
         # Index on sides
         idx_side = [base-1, base, base+1, base+2]
         # Weight on sides
