@@ -1,6 +1,7 @@
 import taichi as ti
 from simulator import Simulator
 import time
+import math
 
 
 @ti.data_oriented
@@ -55,10 +56,10 @@ class SimulationGUI(object):
 
     def reset_camera(self):
         # Offset the camera position from the center of the bound along -Y
-        self.camera.position(self.bound_center[0], self.bound_center[1] - self.bound_extent[1], self.bound_center[2])
-        self.camera.lookat(self.bound_center[0], self.bound_center[1], self.bound_center[2])
+        self.camera.position(self.bound_center.x, self.bound_center.y - self.bound_extent.y, self.bound_center.z)
+        self.camera.lookat(self.bound_center.x, self.bound_center.y, self.bound_center.z)
         self.camera.up(0.0, 0.0, 1.0)
-        # self.camera.fov() # todo: compute this
+        self.camera.fov(math.degrees(math.atan2(self.bound_extent.y, self.bound_extent.x)*2.0))  # todo: compute this
         # self.camera.projection_mode()
         self.scene.set_camera(self.camera)
 
@@ -73,10 +74,11 @@ class SimulationGUI(object):
         # Use the ambient light to see the particles
         self.scene.ambient_light((1, 1, 1))
         # Draw the particles
-        self.scene.particles(self.sim.particles_position, radius=self.p_radius)
+        self.scene.particles(self.sim.particles_position, radius=self.p_radius, color=(0.0,0.0,1.0)) # todo: use a different color for sand
 
-        # todo: draw the line of the edges of the bound
+        # todo: draw the line of the edges of the bound. Maybe on the Canvas?
         # self.scene.
+
 
         self.canvas.scene(self.scene)
         self.window.show()
@@ -111,12 +113,12 @@ class SimulationGUI(object):
             # )
 
 
-            # run simulation step
+            # Simulation step
             self.sim.step()
             self.t_sim = self.sim.t
 
-
-            while self.t_render < self.t_sim:
+            # Render
+            while self.t_render < self.t_sim:   # In the case that simulation step is large
                 t_render_beg = time.time()
                 # update gui
                 self.render()
