@@ -138,10 +138,10 @@ class Simulator(object):
         self.p2g()
 
         # Solve the poisson equation to get pressure
-        self.solve_pressure()
+        # self.solve_pressure()
 
         # Accelerate velocity using the solved pressure
-        self.project_velocity()
+        # self.project_velocity()
 
         # Gather properties (mainly velocity) from grid to particle
         self.g2p()
@@ -321,13 +321,13 @@ class Simulator(object):
     # 0.5*(1.5-|x|)^2,  |x| in [0.5, 1.5)
     # 0,                |x| in [1.5, inf)
     @ti.func
-    def quadratic_kernel(x):
-        w = x.copy()
-        for i, xi in enumerate(x):
-            if xi < 0.5:
-                w[i] = 0.75 - xi**2
-            elif xi < 1.5:
-                w[i] = 0.5 * (1.5 - xi)**2
+    def quadratic_kernel(self, x):
+        w = ti.Vector([0.0 for _ in ti.static(range(3))])
+        for i in ti.static(range(3)):  # todo: maybe we should not assume x.n==3 here
+            if x[i] < 0.5:
+                w[i] = 0.75 - x[i]**2
+            elif x[i] < 1.5:
+                w[i] = 0.5 * (1.5 - x[i])**2
             else:
                 w[i] = 0.0
         return w
