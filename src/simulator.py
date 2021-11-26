@@ -5,7 +5,7 @@ from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'dt' : 0.01,                                # Time step
+    'dt' : 0.001,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
     'grid_size' : (64, 64, 64),                 # Grid size (integer)
@@ -50,7 +50,7 @@ class Simulator(object):
         self.dx = self.cell_extent
 
         self.rho = get_param('rho')
-        
+
 
         # simulation state
         self.cur_step = 0
@@ -97,6 +97,7 @@ class Simulator(object):
         self.grid_weight_y = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1] + 1, self.grid_size[2]))
         self.grid_weight_z = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1], self.grid_size[2] + 1))
 
+        self.clear_grid()
         # self.divergence = ti.field(ti.f32, shape=self.grid_size)
 
     # todo: this is only a very naive particle init method:
@@ -154,12 +155,18 @@ class Simulator(object):
         self.cur_step += 1
         self.t += self.dt
 
+        # Clear the grid for each step
+        self.clear_grid()
+
         # Apply body force
         self.apply_force()
-        print(self.particles_velocity[self.num_particles//2])
+        print('Velocity after apply_force:', self.particles_velocity[self.num_particles//2])
 
         # Scatter properties (mainly velocity) from particle to grid
-        # self.p2g()
+        self.p2g()
+        print('Velocity (grid) after p2g:', self.grid_velocity_z[self.grid_size.x//2, self.grid_size.y//2, self.grid_size.z//2],
+              'weight:', self.grid_weight_z[self.grid_size.x//2, self.grid_size.y//2, self.grid_size.z//2]
+              )
 
         # Solve the poisson equation to get pressure
         # self.solve_pressure()
@@ -168,7 +175,8 @@ class Simulator(object):
         # self.project_velocity()
 
         # Gather properties (mainly velocity) from grid to particle
-        # self.g2p()
+        self.g2p()
+        print('Velocity after g2p:', self.particles_velocity[self.num_particles//2])
 
 
         # Advect particles
@@ -177,10 +185,20 @@ class Simulator(object):
         # Enforce boundary condition
         self.enforce_boundary_condition()
 
-        print(self.particles_position[self.num_particles//2])
+        print('Position after advect_particles:', self.particles_position[self.num_particles//2])
 
         # Mark grid cell type as FLUID, AIR or SOLID (boundary)
         self.mark_cell_type()
+
+    # Clear grid velocities and weights to 0
+    def clear_grid(self):
+        self.grid_velocity_x.fill(0.0)
+        self.grid_velocity_y.fill(0.0)
+        self.grid_velocity_z.fill(0.0)
+
+        self.grid_weight_x.fill(0.0)
+        self.grid_weight_y.fill(0.0)
+        self.grid_weight_z.fill(0.0)
 
     # Helper
     @ti.func
@@ -212,24 +230,34 @@ class Simulator(object):
         for p in self.particles_position:
             xp = self.particles_position[p]
             vp = self.particles_velocity[p]
-            base = ti.cast(ti.floor(xp/self.dx), dtype=ti.int32)
-            frac = xp - base
+            idx = xp/self.dx
+            base = ti.cast(ti.floor(idx), dtype=ti.i32)
+            frac = idx - base
             self.interp_grid(base, frac, vp)
 
         for i, j, k in self.grid_velocity_x:
-            self.grid_velocity_x[i, j, k] /= self.grid_weight_x[i,j,k]
+            v = self.grid_velocity_x[i, j, k]
+            w = self.grid_weight_x[i,j,k]
+            self.grid_velocity_x[i, j, k] = v / w if w > 0.0 else 0.0
         for i, j, k in self.grid_velocity_y:
-            self.grid_velocity_y[i, j, k] /= self.grid_weight_y[i,j,k]
-        for i, j, k in self.grid_velocity_x:
-            self.grid_velocity_z[i, j, k] /= self.grid_weight_z[i,j,k]
+            v = self.grid_velocity_y[i, j, k]
+            w = self.grid_weight_y[i,j,k]
+            self.grid_velocity_y[i, j, k] = v / w if w > 0.0 else 0.0
+        for i, j, k in self.grid_velocity_z:
+            v = self.grid_velocity_z[i, j, k]
+            w = self.grid_weight_z[i,j,k]
+            self.grid_velocity_z[i, j, k] = v / w if w > 0.0 else 0.0
 
     @ti.kernel
     def g2p(self):
         for p in self.particles_position:
             xp = self.particles_position[p]
-            vp = self.particles_velocity[p]
-            base = ti.cast(ti.floor(xp/self.dx), dtype=ti.int32)
-            frac = xp - base
+            # vp = self.particles_velocity[p]
+            idx = xp/self.dx
+            base = ti.cast(ti.floor(idx), dtype=ti.i32)
+            frac = idx - base
+            # if p == 15:
+            #     print('g2p:', xp, idx, base, frac)
             self.interp_particle(base, frac, p)
 
     # @ti.kernel
@@ -317,6 +345,12 @@ class Simulator(object):
             # todo: boundary condition, for velocity
             # self.particles_position[p] = ti.min(ti.max(self.particles_position[p], 0), self.grid_extent)
 
+    @ti.kernel
+    def enforce_boundary_condition(self):
+        for p in self.particles_position:
+            pos = self.particles_position[p]
+            v = self.particles_velocity[p]
+
             for i in ti.static(range(3)):
                 if pos[i] <= self.cell_extent:
                     pos[i] = self.cell_extent
@@ -328,10 +362,6 @@ class Simulator(object):
             self.particles_position[p] = pos
             self.particles_velocity[p] = v
 
-    @ti.kernel
-    def enforce_boundary_condition(self):
-        for p in self.particles_position:
-            self.particles_position[p] = ti.min(ti.max(self.particles_position[p], ti.Vector([0.0,0.0,0.0])), self.grid_extent)
 
     @ti.kernel
     def mark_cell_type(self):
@@ -368,7 +398,7 @@ class Simulator(object):
                 w[i] = 0.0
         return w
 
-    
+
     @ti.func
     def interp_grid(self, base, frac, vp):
         # Quadratic
@@ -398,7 +428,7 @@ class Simulator(object):
                     idx = (idx_center[i].x, idx_side[j].y, idx_center[k].z)
                     self.grid_velocity_y[idx] += vp.y * w
                     self.grid_weight_y[idx] += w
-        
+
         for i in ti.static(range(3)):
             for j in ti.static(range(3)):
                 for k in ti.static(range(4)):
@@ -426,7 +456,7 @@ class Simulator(object):
                 for k in ti.static(range(3)):
                     w = w_side[i].x * w_center[j].y * w_center[k].z
                     idx = (idx_side[i].x, idx_center[j].y, idx_center[k].z)
-                    velocity += self.grid_velocity_x[idx] * w
+                    velocity.x += self.grid_velocity_x[idx] * w
                     weight += w
 
         for i in ti.static(range(3)):
@@ -434,7 +464,7 @@ class Simulator(object):
                 for k in ti.static(range(3)):
                     w = w_center[i].x * w_side[j].y * w_center[k].z
                     idx = (idx_center[i].x, idx_side[j].y, idx_center[k].z)
-                    velocity += self.grid_velocity_y[idx] * w
+                    velocity.y += self.grid_velocity_y[idx] * w
                     weight += w
 
         for i in ti.static(range(3)):
@@ -442,9 +472,13 @@ class Simulator(object):
                 for k in ti.static(range(4)):
                     w = w_center[i].x * w_center[j].y * w_side[k].z
                     idx = (idx_center[i].x, idx_center[j].y, idx_side[k].z)
-                    velocity += self.grid_velocity_z[idx] * w
+                    velocity.z += self.grid_velocity_z[idx] * w
                     weight += w
-
+                    # if p == 15 and i == 0 and j == 0 and k == 1:
+                    #     print('interp_particle000:', w_center[i].x, w_center[j].y, w_side[k].z, idx)
+        # if p == 15:
+        #     print('interp_particle:', base, frac, velocity, weight, w_side[1])
+        # This weight will never be 0
         self.particles_velocity[p] = velocity / weight
 
     # @ti.func
