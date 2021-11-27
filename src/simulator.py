@@ -160,13 +160,13 @@ class Simulator(object):
 
         # Apply body force
         self.apply_force()
-        print('Velocity after apply_force:', self.particles_velocity[self.num_particles//2])
+        # print('Velocity after apply_force:', self.particles_velocity[self.num_particles//2])
 
         # Scatter properties (mainly velocity) from particle to grid
         self.p2g()
-        print('Velocity (grid) after p2g:', self.grid_velocity_z[self.grid_size.x//2, self.grid_size.y//2, self.grid_size.z//2],
-              'weight:', self.grid_weight_z[self.grid_size.x//2, self.grid_size.y//2, self.grid_size.z//2]
-              )
+        # print('Velocity (grid) after p2g:', self.grid_velocity_z[self.grid_size.x//2, self.grid_size.y//2, self.grid_size.z//2],
+        #       'weight:', self.grid_weight_z[self.grid_size.x//2, self.grid_size.y//2, self.grid_size.z//2]
+        #       )
 
         # Solve the poisson equation to get pressure
         # self.solve_pressure()
@@ -176,7 +176,7 @@ class Simulator(object):
 
         # Gather properties (mainly velocity) from grid to particle
         self.g2p()
-        print('Velocity after g2p:', self.particles_velocity[self.num_particles//2])
+        # print('Velocity after g2p:', self.particles_velocity[self.num_particles//2])
 
 
         # Advect particles
@@ -185,7 +185,7 @@ class Simulator(object):
         # Enforce boundary condition
         self.enforce_boundary_condition()
 
-        print('Position after advect_particles:', self.particles_position[self.num_particles//2])
+        # print('Position after advect_particles:', self.particles_position[self.num_particles//2])
 
         # Mark grid cell type as FLUID, AIR or SOLID (boundary)
         self.mark_cell_type()
