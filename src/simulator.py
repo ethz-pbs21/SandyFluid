@@ -5,7 +5,7 @@ from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'dt' : 0.001,                                # Time step
+    'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
     'grid_size' : (64, 64, 64),                 # Grid size (integer)
@@ -109,6 +109,7 @@ class Simulator(object):
         # Number of particles
         range_size = range_max - range_min
         self.num_particles = range_size.x * range_size.y * range_size.z
+        print(self.num_particles)
 
         # Particles
         self.particles_position = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
@@ -127,7 +128,7 @@ class Simulator(object):
         range_max = ti.Vector([range_max_x, range_max_y, range_max_z])
         particle_init_size = range_max - range_min
         for p in self.particles_position:
-            k = p % (particle_init_size.z * particle_init_size.y) + range_min.z
+            k = p % (particle_init_size.z) + range_min.z
             j = (p // particle_init_size.z) % particle_init_size.y + range_min.y
             i = p / (particle_init_size.z * particle_init_size.y) + range_min.x
             self.particles_position[p] = (ti.Vector([i,j,k]) + 0.5) * self.cell_extent
@@ -169,10 +170,10 @@ class Simulator(object):
         #       )
 
         # Solve the poisson equation to get pressure
-        # self.solve_pressure()
+        self.solve_pressure()
 
         # Accelerate velocity using the solved pressure
-        # self.project_velocity()
+        self.project_velocity()
 
         # Gather properties (mainly velocity) from grid to particle
         self.g2p()

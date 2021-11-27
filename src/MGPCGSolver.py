@@ -14,7 +14,7 @@ class MGPCGSolver:
                  v,
                  w,
                  cell_type,
-                 multigrid_level=4,
+                 multigrid_level=1,
                  pre_and_post_smoothing=2,
                  bottom_smoothing=10):
         self.grid_size = grid_size
