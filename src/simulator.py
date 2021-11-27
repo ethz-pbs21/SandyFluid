@@ -339,11 +339,8 @@ class Simulator(object):
         # Forward Euler
         # todo: RK2
         for p in self.particles_position:
-            pos = self.particles_position[p]
-            v = self.particles_velocity[p]
-            pos += v * self.dt
-            # todo: boundary condition, for velocity
-            # self.particles_position[p] = ti.min(ti.max(self.particles_position[p], 0), self.grid_extent)
+            self.particles_position[p] += self.particles_velocity[p] * self.dt
+
 
     @ti.kernel
     def enforce_boundary_condition(self):
@@ -434,6 +431,8 @@ class Simulator(object):
                 for k in ti.static(range(4)):
                     w = w_center[i].x * w_center[j].y * w_side[k].z
                     idx = (idx_center[i].x, idx_center[j].y, idx_side[k].z)
+                    # if idx[0] == self.grid_size.x // 2 and idx[1] == self.grid_size.y //2 and idx[2] == self.grid_size.z // 2:
+                    #     print('weight p2g:', w_center[i].x, w_center[j].y, w_side[k].z)
                     self.grid_velocity_z[idx] += vp.z * w
                     self.grid_weight_z[idx] += w
 
@@ -448,38 +447,38 @@ class Simulator(object):
         # Weight on centers
         w_center = [self.quadratic_kernel(0.5+frac), self.quadratic_kernel(ti.abs(0.5-frac)), self.quadratic_kernel(1.5-frac)]
 
-        weight = 0.0
-        velocity = ti.Vector([0.0, 0.0, 0.0])
+        wx = wy = wz = 0.0
+        vx = vy = vz = 0.0
 
         for i in ti.static(range(4)):
             for j in ti.static(range(3)):
                 for k in ti.static(range(3)):
                     w = w_side[i].x * w_center[j].y * w_center[k].z
                     idx = (idx_side[i].x, idx_center[j].y, idx_center[k].z)
-                    velocity.x += self.grid_velocity_x[idx] * w
-                    weight += w
+                    vx += self.grid_velocity_x[idx] * w
+                    wx += w
 
         for i in ti.static(range(3)):
             for j in ti.static(range(4)):
                 for k in ti.static(range(3)):
                     w = w_center[i].x * w_side[j].y * w_center[k].z
                     idx = (idx_center[i].x, idx_side[j].y, idx_center[k].z)
-                    velocity.y += self.grid_velocity_y[idx] * w
-                    weight += w
+                    vy += self.grid_velocity_y[idx] * w
+                    wy += w
 
         for i in ti.static(range(3)):
             for j in ti.static(range(3)):
                 for k in ti.static(range(4)):
                     w = w_center[i].x * w_center[j].y * w_side[k].z
                     idx = (idx_center[i].x, idx_center[j].y, idx_side[k].z)
-                    velocity.z += self.grid_velocity_z[idx] * w
-                    weight += w
+                    vz += self.grid_velocity_z[idx] * w
+                    wz += w
                     # if p == 15 and i == 0 and j == 0 and k == 1:
                     #     print('interp_particle000:', w_center[i].x, w_center[j].y, w_side[k].z, idx)
         # if p == 15:
         #     print('interp_particle:', base, frac, velocity, weight, w_side[1])
-        # This weight will never be 0
-        self.particles_velocity[p] = velocity / weight
+        # The weight will never be 0
+        self.particles_velocity[p] = ti.Vector([vx/wx, vy/wy, vz/wz])
 
     # @ti.func
     # def compute_divergence(self):
