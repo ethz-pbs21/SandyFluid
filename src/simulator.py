@@ -5,7 +5,7 @@ from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'mode' : 'apic',                             # pic, apic, flip
+    'mode' : 'flip',                             # pic, apic, flip
     'flip_weight' : 0.99,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
     'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
@@ -95,6 +95,10 @@ class Simulator(object):
         self.grid_velocity_x = ti.field(ti.f32, shape=(self.grid_size[0] + 1, self.grid_size[1], self.grid_size[2]))
         self.grid_velocity_y = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1] + 1, self.grid_size[2]))
         self.grid_velocity_z = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1], self.grid_size[2] + 1))
+
+        self.grid_velocity_x_last = ti.field(ti.f32, shape=(self.grid_size[0] + 1, self.grid_size[1], self.grid_size[2]))
+        self.grid_velocity_y_last = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1] + 1, self.grid_size[2]))
+        self.grid_velocity_z_last = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1], self.grid_size[2] + 1))
         # For renormalization after p2g
         self.grid_weight_x = ti.field(ti.f32, shape=(self.grid_size[0] + 1, self.grid_size[1], self.grid_size[2]))
         self.grid_weight_y = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1] + 1, self.grid_size[2]))
@@ -172,6 +176,11 @@ class Simulator(object):
         # print('Velocity (grid) after p2g:', self.grid_velocity_z[self.grid_size.x//2, self.grid_size.y//2, self.grid_size.z//2],
         #       'weight:', self.grid_weight_z[self.grid_size.x//2, self.grid_size.y//2, self.grid_size.z//2]
         #       )
+
+        if self.mode == 'flip':
+            self.grid_velocity_x_last.copy_from(self.grid_velocity_x)
+            self.grid_velocity_y_last.copy_from(self.grid_velocity_y)
+            self.grid_velocity_z_last.copy_from(self.grid_velocity_z)
 
         # Solve the poisson equation to get pressure
         self.solve_pressure()
@@ -469,6 +478,8 @@ class Simulator(object):
         C_y = ti.Matrix.zero(ti.f32, 3)
         C_z = ti.Matrix.zero(ti.f32, 3)
 
+        vx_d = vy_d = vz_d = 0.0
+
         for i in ti.static(range(4)):
             for j in ti.static(range(3)):
                 for k in ti.static(range(3)):
@@ -476,6 +487,8 @@ class Simulator(object):
                     idx = (idx_side[i].x, idx_center[j].y, idx_center[k].z)
                     vtemp = self.grid_velocity_x[idx] * w
                     vx += vtemp
+                    if self.mode == 'flip':
+                        vx_d += vtemp - self.grid_velocity_x_last[idx] * w
                     if self.mode == 'apic':
                         dpos = ti.Vector([i-1, j-0.5, k-0.5]) - frac
                         C_x += 4 * vtemp * dpos / self.dx
@@ -488,6 +501,8 @@ class Simulator(object):
                     idx = (idx_center[i].x, idx_side[j].y, idx_center[k].z)
                     vtemp = self.grid_velocity_y[idx] * w
                     vy += vtemp
+                    if self.mode == 'flip':
+                        vy_d += vtemp - self.grid_velocity_y_last[idx] * w
                     if self.mode == 'apic':
                         dpos = ti.Vector([i-0.5, j-1, k-0.5]) - frac
                         C_y += 4 * vtemp * dpos / self.dx
@@ -500,6 +515,8 @@ class Simulator(object):
                     idx = (idx_center[i].x, idx_center[j].y, idx_side[k].z)
                     vtemp = self.grid_velocity_z[idx] * w
                     vz += vtemp
+                    if self.mode == 'flip':
+                        vz_d += vtemp - self.grid_velocity_z_last[idx] * w
                     if self.mode == 'apic':
                         dpos = ti.Vector([i-0.5, j-0.5, k-1]) - frac
                         C_z += 4 * vtemp * dpos / self.dx
@@ -509,7 +526,16 @@ class Simulator(object):
         # if p == 15:
         #     print('interp_particle:', base, frac, velocity, weight, w_side[1])
         # The weight will never be 0
-        self.particles_velocity[p] = ti.Vector([vx/wx, vy/wy, vz/wz])
+        if self.mode == 'flip':
+            vp = self.particles_velocity[p]
+            vxp = vp.x + vx_d/wx
+            vyp = vp.y + vy_d/wy
+            vzp = vp.z + vz_d/wz
+            self.particles_velocity[p] = ti.Vector([vxp * self.flip_weight + vx/wx * (1 - self.flip_weight),
+                                                    vyp * self.flip_weight + vy/wy * (1 - self.flip_weight),
+                                                    vzp * self.flip_weight + vz/wz * (1 - self.flip_weight)])
+        else:
+            self.particles_velocity[p] = ti.Vector([vx/wx, vy/wy, vz/wz])
         self.particles_affine_C[p] = ti.Matrix.rows([C_x/wx, C_y/wy, C_z/wz])
 
     # @ti.func
