@@ -5,6 +5,8 @@ from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
+    'mode' : 'apic',                             # pic, apic, flip
+    'flip_weight' : 0.99,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
     'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
@@ -33,7 +35,8 @@ class Simulator(object):
         def get_param(key:str, default_val=None):
             return params[key] if key in params else default_val
 
-
+        self.mode = get_param('mode')
+        self.flip_weight = get_param('flip_weight')
         # Time step
         self.dt = get_param('dt')
         # Body force (gravity)
@@ -114,6 +117,7 @@ class Simulator(object):
         # Particles
         self.particles_position = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
         self.particles_velocity = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
+        self.particles_affine_C = ti.Matrix.field(3, 3, dtype=ti.f32, shape=self.num_particles)
 
         self.init_particles_kernel(range_min[0], range_min[1], range_min[2], range_max[0], range_max[1], range_max[2])
 
@@ -231,10 +235,11 @@ class Simulator(object):
         for p in self.particles_position:
             xp = self.particles_position[p]
             vp = self.particles_velocity[p]
+            cp = self.particles_affine_C[p]
             idx = xp/self.dx
             base = ti.cast(ti.floor(idx), dtype=ti.i32)
             frac = idx - base
-            self.interp_grid(base, frac, vp)
+            self.interp_grid(base, frac, vp, cp)
 
         for i, j, k in self.grid_velocity_x:
             v = self.grid_velocity_x[i, j, k]
@@ -398,7 +403,7 @@ class Simulator(object):
 
 
     @ti.func
-    def interp_grid(self, base, frac, vp):
+    def interp_grid(self, base, frac, vp, cp):
         # Quadratic
         # todo: try other kernels (linear, cubic, ...)
 
@@ -417,6 +422,9 @@ class Simulator(object):
                     w = w_side[i].x * w_center[j].y * w_center[k].z
                     idx = (idx_side[i].x, idx_center[j].y, idx_center[k].z)
                     self.grid_velocity_x[idx] += vp.x * w
+                    if self.mode == 'apic':
+                        dpos = (ti.Vector([i-1, j-0.5, k-0.5]) - frac) * self.dx
+                        self.grid_velocity_x[idx] += w * (cp @ dpos).x
                     self.grid_weight_x[idx] += w
 
         for i in ti.static(range(3)):
@@ -425,6 +433,9 @@ class Simulator(object):
                     w = w_center[i].x * w_side[j].y * w_center[k].z
                     idx = (idx_center[i].x, idx_side[j].y, idx_center[k].z)
                     self.grid_velocity_y[idx] += vp.y * w
+                    if self.mode == 'apic':
+                        dpos = (ti.Vector([i-0.5, j-1, k-0.5]) - frac) * self.dx
+                        self.grid_velocity_y[idx] += w * (cp @ dpos).y
                     self.grid_weight_y[idx] += w
 
         for i in ti.static(range(3)):
@@ -435,6 +446,9 @@ class Simulator(object):
                     # if idx[0] == self.grid_size.x // 2 and idx[1] == self.grid_size.y //2 and idx[2] == self.grid_size.z // 2:
                     #     print('weight p2g:', w_center[i].x, w_center[j].y, w_side[k].z)
                     self.grid_velocity_z[idx] += vp.z * w
+                    if self.mode == 'apic':
+                        dpos = (ti.Vector([i-0.5, j-0.5, k-1]) - frac) * self.dx
+                        self.grid_velocity_z[idx] += w * (cp @ dpos).z
                     self.grid_weight_z[idx] += w
 
     @ti.func
@@ -451,12 +465,20 @@ class Simulator(object):
         wx = wy = wz = 0.0
         vx = vy = vz = 0.0
 
+        C_x = ti.Matrix.zero(ti.f32, 3)
+        C_y = ti.Matrix.zero(ti.f32, 3)
+        C_z = ti.Matrix.zero(ti.f32, 3)
+
         for i in ti.static(range(4)):
             for j in ti.static(range(3)):
                 for k in ti.static(range(3)):
                     w = w_side[i].x * w_center[j].y * w_center[k].z
                     idx = (idx_side[i].x, idx_center[j].y, idx_center[k].z)
-                    vx += self.grid_velocity_x[idx] * w
+                    vtemp = self.grid_velocity_x[idx] * w
+                    vx += vtemp
+                    if self.mode == 'apic':
+                        dpos = ti.Vector([i-1, j-0.5, k-0.5]) - frac
+                        C_x += 4 * vtemp * dpos / self.dx
                     wx += w
 
         for i in ti.static(range(3)):
@@ -464,7 +486,11 @@ class Simulator(object):
                 for k in ti.static(range(3)):
                     w = w_center[i].x * w_side[j].y * w_center[k].z
                     idx = (idx_center[i].x, idx_side[j].y, idx_center[k].z)
-                    vy += self.grid_velocity_y[idx] * w
+                    vtemp = self.grid_velocity_y[idx] * w
+                    vy += vtemp
+                    if self.mode == 'apic':
+                        dpos = ti.Vector([i-0.5, j-1, k-0.5]) - frac
+                        C_y += 4 * vtemp * dpos / self.dx
                     wy += w
 
         for i in ti.static(range(3)):
@@ -472,7 +498,11 @@ class Simulator(object):
                 for k in ti.static(range(4)):
                     w = w_center[i].x * w_center[j].y * w_side[k].z
                     idx = (idx_center[i].x, idx_center[j].y, idx_side[k].z)
-                    vz += self.grid_velocity_z[idx] * w
+                    vtemp = self.grid_velocity_z[idx] * w
+                    vz += vtemp
+                    if self.mode == 'apic':
+                        dpos = ti.Vector([i-0.5, j-0.5, k-1]) - frac
+                        C_z += 4 * vtemp * dpos / self.dx
                     wz += w
                     # if p == 15 and i == 0 and j == 0 and k == 1:
                     #     print('interp_particle000:', w_center[i].x, w_center[j].y, w_side[k].z, idx)
@@ -480,6 +510,7 @@ class Simulator(object):
         #     print('interp_particle:', base, frac, velocity, weight, w_side[1])
         # The weight will never be 0
         self.particles_velocity[p] = ti.Vector([vx/wx, vy/wy, vz/wz])
+        self.particles_affine_C[p] = ti.Matrix.rows([C_x/wx, C_y/wy, C_z/wz])
 
     # @ti.func
     # def compute_divergence(self):
