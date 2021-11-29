@@ -62,7 +62,7 @@ class Simulator(object):
 
         self.init_fields()
 
-        self.init_particles((16, 16, 32), (48, 48, 64))  # todo
+        self.init_particles((16, 16, 16), (48, 48, 60))  # todo
 
         # pressure solver type
         self.use_mgpcg = get_param('use_mgpcg')
@@ -125,10 +125,10 @@ class Simulator(object):
 
         self.init_particles_kernel(range_min[0], range_min[1], range_min[2], range_max[0], range_max[1], range_max[2])
 
-        for i in range(range_max[0] - range_min[0]):
-            for j in range(range_max[1] - range_min[1]):
-                for k in range(range_max[2] - range_min[2]):
-                    self.cell_type[i+range_min[0], j+range_min[1], k+range_min[2]] = FLUID
+        # for i in range(range_min[0], range_max[0]):
+        #     for j in range(range_min[1], range_max[1]):
+        #         for k in range(range_min[2], range_max[2]):
+        #             self.cell_type[i, j, k] = FLUID
 
     @ti.kernel
     def init_particles_kernel(self, range_min_x:ti.i32, range_min_y:ti.i32,range_min_z:ti.i32,range_max_x:ti.i32,range_max_y:ti.i32,range_max_z:ti.i32):
@@ -136,9 +136,10 @@ class Simulator(object):
         range_max = ti.Vector([range_max_x, range_max_y, range_max_z])
         particle_init_size = range_max - range_min
         for p in self.particles_position:
-            k = p % (particle_init_size.z) + range_min.z
-            j = (p // particle_init_size.z) % particle_init_size.y + range_min.y
-            i = p / (particle_init_size.z * particle_init_size.y) + range_min.x
+            k = p % (range_max_z - range_min_z) + range_min_z
+            j = (p // range_max_z - range_min_z) % (range_max_y - range_min_y) + range_min_y
+            i = (p // ((range_max_z - range_min_z) * (range_max_y - range_min_y))) % (range_max_x - range_min_x) + range_min_x
+            self.cell_type[i, j, k] = FLUID
             self.particles_position[p] = (ti.Vector([i,j,k]) + 0.5) * self.cell_extent
 
     def init_solver(self):
