@@ -5,7 +5,7 @@ from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'mode' : 'flip',                             # pic, apic, flip
+    'mode' : 'apic',                             # pic, apic, flip
     'flip_weight' : 0.99,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
     'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
@@ -433,7 +433,7 @@ class Simulator(object):
                     idx = (idx_side[i].x, idx_center[j].y, idx_center[k].z)
                     self.grid_velocity_x[idx] += vp.x * w
                     if self.mode == 'apic':
-                        dpos = (ti.Vector([i-1, j-0.5, k-0.5]) - frac) * self.dx
+                        dpos = ti.Vector([i-1, j-0.5, k-0.5]) - frac
                         self.grid_velocity_x[idx] += w * (cp @ dpos).x
                     self.grid_weight_x[idx] += w
 
@@ -444,7 +444,7 @@ class Simulator(object):
                     idx = (idx_center[i].x, idx_side[j].y, idx_center[k].z)
                     self.grid_velocity_y[idx] += vp.y * w
                     if self.mode == 'apic':
-                        dpos = (ti.Vector([i-0.5, j-1, k-0.5]) - frac) * self.dx
+                        dpos = ti.Vector([i-0.5, j-1, k-0.5]) - frac
                         self.grid_velocity_y[idx] += w * (cp @ dpos).y
                     self.grid_weight_y[idx] += w
 
@@ -457,7 +457,7 @@ class Simulator(object):
                     #     print('weight p2g:', w_center[i].x, w_center[j].y, w_side[k].z)
                     self.grid_velocity_z[idx] += vp.z * w
                     if self.mode == 'apic':
-                        dpos = (ti.Vector([i-0.5, j-0.5, k-1]) - frac) * self.dx
+                        dpos = ti.Vector([i-0.5, j-0.5, k-1]) - frac
                         self.grid_velocity_z[idx] += w * (cp @ dpos).z
                     self.grid_weight_z[idx] += w
 
@@ -492,7 +492,7 @@ class Simulator(object):
                         vx_d += vtemp - self.grid_velocity_x_last[idx] * w
                     if self.mode == 'apic':
                         dpos = ti.Vector([i-1, j-0.5, k-0.5]) - frac
-                        C_x += 4 * vtemp * dpos / self.dx
+                        C_x += 4 * vtemp * dpos  / self.grid_size.x
                     wx += w
 
         for i in ti.static(range(3)):
@@ -506,7 +506,7 @@ class Simulator(object):
                         vy_d += vtemp - self.grid_velocity_y_last[idx] * w
                     if self.mode == 'apic':
                         dpos = ti.Vector([i-0.5, j-1, k-0.5]) - frac
-                        C_y += 4 * vtemp * dpos / self.dx
+                        C_y += 4 * vtemp * dpos / self.grid_size.y
                     wy += w
 
         for i in ti.static(range(3)):
@@ -520,7 +520,7 @@ class Simulator(object):
                         vz_d += vtemp - self.grid_velocity_z_last[idx] * w
                     if self.mode == 'apic':
                         dpos = ti.Vector([i-0.5, j-0.5, k-1]) - frac
-                        C_z += 4 * vtemp * dpos / self.dx
+                        C_z += 4 * vtemp * dpos / self.grid_size.z
                     wz += w
                     # if p == 15 and i == 0 and j == 0 and k == 1:
                     #     print('interp_particle000:', w_center[i].x, w_center[j].y, w_side[k].z, idx)

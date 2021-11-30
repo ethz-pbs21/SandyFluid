@@ -70,11 +70,11 @@ class SimulationGUI(object):
         # todo: support resize Window
 
         # This seems to be a bug... If no point light exists then interal error would occur
-        self.scene.point_light(pos=(0, 0, 0), color=(0, 0, 0))
+        self.scene.point_light(pos=tuple(self.bound_center), color=(5, 5, 5))
         # Use the ambient light to see the particles
         self.scene.ambient_light((1, 1, 1))
         # Draw the particles
-        self.scene.particles(self.sim.particles_position, radius=self.p_radius, color=(0.0,0.0,1.0)) # todo: use a different color for sand
+        self.scene.particles(self.sim.particles_position, radius=0.25*self.p_radius, color=(0.0,0.0,1.0)) # todo: use a different color for sand
 
         # todo: draw the line of the edges of the bound. Maybe on the Canvas?
         # self.scene.
