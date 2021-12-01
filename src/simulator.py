@@ -5,8 +5,8 @@ from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'mode' : 'apic',                             # pic, apic, flip
-    'flip_weight' : 0.99,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
+    'mode' : 'flip',                             # pic, apic, flip
+    'flip_weight' : 0.95,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
     'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
@@ -16,7 +16,9 @@ global_params = {
     'mac_cormack' : False,
     'gauss_seidel_max_iterations' : 1000,
     'gauss_seidel_min_accuracy' : 1e-5,
-    'use_mgpcg' : True,
+    'use_mgpcg' : False,
+    'num_jacobi_iter' : 100,
+    'damped_jacobi_weight' : 0.67,
 }
 
 FLUID = 0
@@ -54,6 +56,8 @@ class Simulator(object):
 
         self.rho = get_param('rho')
 
+        self.num_jacobi_iter = get_param('num_jacobi_iter')
+        self.damped_jacobi_weight = get_param('damped_jacobi_weight')
 
         # simulation state
         self.cur_step = 0
@@ -62,7 +66,7 @@ class Simulator(object):
 
         self.init_fields()
 
-        self.init_particles((16, 16, 16), (48, 48, 60))  # todo
+        self.init_particles((16, 16, 0), (48, 48, 60))  # todo
 
         # pressure solver type
         self.use_mgpcg = get_param('use_mgpcg')
@@ -105,13 +109,14 @@ class Simulator(object):
         self.grid_weight_z = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1], self.grid_size[2] + 1))
 
         self.clear_grid()
-        # self.divergence = ti.field(ti.f32, shape=self.grid_size)
+        self.divergence = ti.field(ti.f32, shape=self.grid_size)
+        self.new_pressure = ti.field(ti.f32, shape=self.grid_size)
 
     # todo: this is only a very naive particle init method:
     # it just select a portion of the grid and fill one particle for each cell
     def init_particles(self, range_min, range_max):
-        range_min = ti.max(ti.Vector(range_min), 0)
-        range_max = ti.min(ti.Vector(range_max), self.grid_size)
+        range_min = ti.max(ti.Vector(range_min), 1)
+        range_max = ti.min(ti.Vector(range_max), self.grid_size-1)
 
         # Number of particles
         range_size = range_max - range_min
@@ -137,9 +142,10 @@ class Simulator(object):
         particle_init_size = range_max - range_min
         for p in self.particles_position:
             k = p % (range_max_z - range_min_z) + range_min_z
-            j = (p // range_max_z - range_min_z) % (range_max_y - range_min_y) + range_min_y
+            j = (p // (range_max_z - range_min_z)) % (range_max_y - range_min_y) + range_min_y
             i = (p // ((range_max_z - range_min_z) * (range_max_y - range_min_y))) % (range_max_x - range_min_x) + range_min_x
-            self.cell_type[i, j, k] = FLUID
+            if self.cell_type[i, j, k] != SOLID:
+                self.cell_type[i, j, k] = FLUID
             self.particles_position[p] = (ti.Vector([i,j,k]) + 0.5) * self.cell_extent
 
     def init_solver(self):
@@ -168,8 +174,6 @@ class Simulator(object):
         # Clear the grid for each step
         self.clear_grid()
 
-        # Apply body force
-        self.apply_force()
         # print('Velocity after apply_force:', self.particles_velocity[self.num_particles//2])
 
         # Scatter properties (mainly velocity) from particle to grid
@@ -182,6 +186,13 @@ class Simulator(object):
             self.grid_velocity_x_last.copy_from(self.grid_velocity_x)
             self.grid_velocity_y_last.copy_from(self.grid_velocity_y)
             self.grid_velocity_z_last.copy_from(self.grid_velocity_z)
+
+        # Apply body force
+        self.apply_force()
+
+        self.enforce_boundary_condition()
+
+        self.compute_divergence()
 
         # Solve the poisson equation to get pressure
         self.solve_pressure()
@@ -196,9 +207,6 @@ class Simulator(object):
 
         # Advect particles
         self.advect_particles()
-
-        # Enforce boundary condition
-        self.enforce_boundary_condition()
 
         # print('Position after advect_particles:', self.particles_position[self.num_particles//2])
 
@@ -237,8 +245,11 @@ class Simulator(object):
     @ti.kernel
     def apply_force(self):
         # only consider body force (gravity) for now
-        for p in self.particles_velocity:
-            self.particles_velocity[p] += self.dt * self.g
+        # for p in self.particles_velocity:
+        #     self.particles_velocity[p] += self.dt * self.g
+
+        for i, j, k in self.grid_velocity_z:
+            self.grid_velocity_z[i, j, k] -= 9.8 * self.dt
 
     @ti.kernel
     def p2g(self):
@@ -279,14 +290,17 @@ class Simulator(object):
     # @ti.kernel
     def solve_pressure(self):
         if self.use_mgpcg:
-            scale_A = self.dt / (self.rho * self.dx ** 2)
+            scale_A = self.dt / (self.rho * (self.dx ** 2))
             scale_b = 1 / self.dx
 
             self.mgpcg_solver.system_init(scale_A, scale_b)
             self.mgpcg_solver.solve(100)
 
             self.pressure.copy_from(self.mgpcg_solver.p)
-        # else:
+        else:
+            for i in range(self.num_jacobi_iter):
+                self.jacobi_iter()
+                self.pressure.copy_from(self.new_pressure)
         #     # set Neumann boundary conditons
         #     for y in range(0, self.grid_size[1]):
         #         self.grid_velocity_x[0, y] = self.grid_velocity_x[2, y]
@@ -357,9 +371,6 @@ class Simulator(object):
         for p in self.particles_position:
             self.particles_position[p] += self.particles_velocity[p] * self.dt
 
-
-    @ti.kernel
-    def enforce_boundary_condition(self):
         for p in self.particles_position:
             pos = self.particles_position[p]
             v = self.particles_velocity[p]
@@ -374,6 +385,17 @@ class Simulator(object):
 
             self.particles_position[p] = pos
             self.particles_velocity[p] = v
+
+    @ti.kernel
+    def enforce_boundary_condition(self):
+        for i, j, k in self.cell_type:
+            if self.cell_type[i, j, k] == SOLID:
+                self.grid_velocity_x[i, j, k] = 0.0
+                self.grid_velocity_x[i + 1, j, k] = 0.0
+                self.grid_velocity_y[i, j, k] = 0.0
+                self.grid_velocity_y[i, j + 1, k] = 0.0
+                self.grid_velocity_z[i, j, k] = 0.0
+                self.grid_velocity_z[i, j, k + 1] = 0.0
 
 
     @ti.kernel
@@ -472,14 +494,20 @@ class Simulator(object):
         # Weight on centers
         w_center = [self.quadratic_kernel(0.5+frac), self.quadratic_kernel(ti.abs(0.5-frac)), self.quadratic_kernel(1.5-frac)]
 
-        wx = wy = wz = 0.0
-        vx = vy = vz = 0.0
+        wx = 0.0
+        wy = 0.0
+        wz = 0.0
+        vx = 0.0
+        vy = 0.0
+        vz = 0.0
 
         C_x = ti.Matrix.zero(ti.f32, 3)
         C_y = ti.Matrix.zero(ti.f32, 3)
         C_z = ti.Matrix.zero(ti.f32, 3)
 
-        vx_d = vy_d = vz_d = 0.0
+        vx_d = 0.0
+        vy_d = 0.0
+        vz_d = 0.0
 
         for i in ti.static(range(4)):
             for j in ti.static(range(3)):
@@ -539,14 +567,69 @@ class Simulator(object):
             self.particles_velocity[p] = ti.Vector([vx/wx, vy/wy, vz/wz])
         self.particles_affine_C[p] = ti.Matrix.rows([C_x/wx, C_y/wy, C_z/wz])
 
-    # @ti.func
-    # def compute_divergence(self):
-    #     for i, j, k in ti.ndrange(
-    #         (1, self.grid_size[0] - 1), (1, self.grid_size[1] - 1), (1, self.grid_size[2] - 1)
-    #     ):
-    #         dudx = (self.grid_velocity_x[x + 1, y] - self.grid_velocity_x[x, y]) / self.dx
-    #         dudy = (self.grid_velocity_y[x, y + 1] - self.grid_velocity_y[x, y]) / self.dx
-    #         self.divergence[x, y] = dudx + dudy
+    @ti.kernel
+    def compute_divergence(self):
+        for i, j, k in self.divergence:
+            if not self.is_solid(i, j, k):
+                div = (self.grid_velocity_x[i + 1, j, k] - self.grid_velocity_x[i, j, k])
+                div += (self.grid_velocity_y[i, j + 1, k] - self.grid_velocity_y[i, j, k])
+                div += (self.grid_velocity_z[i, j, k + 1] - self.grid_velocity_z[i, j, k])
+
+                if self.is_solid(i-1, j, k):
+                    div += self.grid_velocity_x[i, j, k]
+                if self.is_solid(i+1, j, k):
+                    div -= self.grid_velocity_x[i + 1, j, k]
+                if self.is_solid(i, j-1, k):
+                    div += self.grid_velocity_y[i, j, k]
+                if self.is_solid(i, j+1, k):
+                    div -= self.grid_velocity_y[i, j + 1, k]
+                if self.is_solid(i, j, k-1):
+                    div += self.grid_velocity_z[i, j, k]
+                if self.is_solid(i, j, k+1):
+                    div -= self.grid_velocity_z[i, j, k + 1]
+
+                self.divergence[i, j, k] = div
+            else:
+                self.divergence[i, j, k] = 0.0
+            self.divergence[i, j, k] /= self.dx
+
+    @ti.kernel
+    def jacobi_iter(self):
+        for i, j, k in self.pressure:
+            if self.is_fluid(i, j, k):
+                div = self.divergence[i, j, k]
+
+                p_x1 = self.pressure[i - 1, j, k]
+                p_x2 = self.pressure[i + 1, j, k]
+                p_y1 = self.pressure[i, j - 1, k]
+                p_y2 = self.pressure[i, j + 1, k]
+                p_z1 = self.pressure[i, j, k - 1]
+                p_z2 = self.pressure[i, j, k + 1]
+                n = 6
+                if self.is_solid(i-1, j, k):
+                    p_x1 = 0.0
+                    n -= 1
+                if self.is_solid(i+1, j, k):
+                    p_x2 = 0.0
+                    n -= 1
+                if self.is_solid(i, j-1, k):
+                    p_y1 = 0.0
+                    n -= 1
+                if self.is_solid(i, j+1, k):
+                    p_y2 = 0.0
+                    n -= 1
+                if self.is_solid(i, j, k-1):
+                    p_z1 = 0.0
+                    n -= 1
+                if self.is_solid(i, j, k+1):
+                    p_z2 = 0.0
+                    n -= 1
+
+                self.new_pressure[i, j, k] = (1 - self.damped_jacobi_weight) * self.pressure[i, j, k] +\
+                                             self.damped_jacobi_weight * (p_x1 + p_x2 + p_y1 + p_y2 + p_z1 + p_z2 - div * self.rho / self.dt * (self.dx ** 2)) / n
+            else:
+                self.new_pressure[i, j, k] = 0.0
+
 
 
 

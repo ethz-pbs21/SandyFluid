@@ -14,7 +14,7 @@ class MGPCGSolver:
                  v,
                  w,
                  cell_type,
-                 multigrid_level=1,
+                 multigrid_level=2,
                  pre_and_post_smoothing=2,
                  bottom_smoothing=10):
         self.grid_size = grid_size
@@ -120,7 +120,7 @@ class MGPCGSolver:
                 if self.cell_type[i, j, k - 1] == SOLID:
                     self.b[i, j, k] -= scale_b * (self.w[i, j, k] - 0)
                 if self.cell_type[i, j, k + 1] == SOLID:
-                    self.b[i, j, k] += scale_b * (self.v[i, j, k + 1] - 0)
+                    self.b[i, j, k] += scale_b * (self.w[i, j, k + 1] - 0)
 
         # define left handside of linear system
         for i, j, k in ti.ndrange(self.grid_size[0], self.grid_size[1], self.grid_size[2]):
