@@ -5,7 +5,7 @@ from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'mode' : 'flip',                             # pic, apic, flip
+    'mode' : 'pic',                             # pic, apic, flip
     'flip_weight' : 0.95,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
     'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
@@ -18,7 +18,7 @@ global_params = {
     'gauss_seidel_min_accuracy' : 1e-5,
     'use_mgpcg' : False,
     'num_jacobi_iter' : 100,
-    'damped_jacobi_weight' : 0.67,
+    'damped_jacobi_weight' : 1.0,
 }
 
 FLUID = 0
@@ -124,9 +124,9 @@ class Simulator(object):
         print(self.num_particles)
 
         # Particles
-        self.particles_position = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
-        self.particles_velocity = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles)
-        self.particles_affine_C = ti.Matrix.field(3, 3, dtype=ti.f32, shape=self.num_particles)
+        self.particles_position = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles * 4)
+        self.particles_velocity = ti.Vector.field(3, dtype=ti.f32, shape=self.num_particles * 4)
+        self.particles_affine_C = ti.Matrix.field(3, 3, dtype=ti.f32, shape=self.num_particles * 4)
 
         self.init_particles_kernel(range_min[0], range_min[1], range_min[2], range_max[0], range_max[1], range_max[2])
 
@@ -141,12 +141,13 @@ class Simulator(object):
         range_max = ti.Vector([range_max_x, range_max_y, range_max_z])
         particle_init_size = range_max - range_min
         for p in self.particles_position:
-            k = p % (range_max_z - range_min_z) + range_min_z
-            j = (p // (range_max_z - range_min_z)) % (range_max_y - range_min_y) + range_min_y
-            i = (p // ((range_max_z - range_min_z) * (range_max_y - range_min_y))) % (range_max_x - range_min_x) + range_min_x
+            p1 = p // 4
+            k = p1 % (range_max_z - range_min_z) + range_min_z
+            j = (p1 // (range_max_z - range_min_z)) % (range_max_y - range_min_y) + range_min_y
+            i = (p1 // ((range_max_z - range_min_z) * (range_max_y - range_min_y))) % (range_max_x - range_min_x) + range_min_x
             if self.cell_type[i, j, k] != SOLID:
                 self.cell_type[i, j, k] = FLUID
-            self.particles_position[p] = (ti.Vector([i,j,k]) + 0.5) * self.cell_extent
+            self.particles_position[p] = (ti.Vector([i,j,k]) + ti.Vector([ti.random(), ti.random(), ti.random()])) * self.cell_extent
 
     def init_solver(self):
         # init pressure solver
@@ -575,18 +576,18 @@ class Simulator(object):
                 div += (self.grid_velocity_y[i, j + 1, k] - self.grid_velocity_y[i, j, k])
                 div += (self.grid_velocity_z[i, j, k + 1] - self.grid_velocity_z[i, j, k])
 
-                if self.is_solid(i-1, j, k):
-                    div += self.grid_velocity_x[i, j, k]
-                if self.is_solid(i+1, j, k):
-                    div -= self.grid_velocity_x[i + 1, j, k]
-                if self.is_solid(i, j-1, k):
-                    div += self.grid_velocity_y[i, j, k]
-                if self.is_solid(i, j+1, k):
-                    div -= self.grid_velocity_y[i, j + 1, k]
-                if self.is_solid(i, j, k-1):
-                    div += self.grid_velocity_z[i, j, k]
-                if self.is_solid(i, j, k+1):
-                    div -= self.grid_velocity_z[i, j, k + 1]
+                # if self.is_solid(i-1, j, k):
+                #     div += self.grid_velocity_x[i, j, k]
+                # if self.is_solid(i+1, j, k):
+                #     div -= self.grid_velocity_x[i + 1, j, k]
+                # if self.is_solid(i, j-1, k):
+                #     div += self.grid_velocity_y[i, j, k]
+                # if self.is_solid(i, j+1, k):
+                #     div -= self.grid_velocity_y[i, j + 1, k]
+                # if self.is_solid(i, j, k-1):
+                #     div += self.grid_velocity_z[i, j, k]
+                # if self.is_solid(i, j, k+1):
+                #     div -= self.grid_velocity_z[i, j, k + 1]
 
                 self.divergence[i, j, k] = div
             else:
