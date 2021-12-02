@@ -5,13 +5,13 @@ from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'mode' : 'pic',                             # pic, apic, flip
-    'flip_weight' : 0.95,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
+    'mode' : 'apic',                            # pic, apic, flip
+    'flip_weight' : 1,                          # FLIP * flip_weight + PIC * (1 - flip_weight)
     'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
     'grid_size' : (64, 64, 64),                 # Grid size (integer)
-    'cell_extent': 0.1,                        # Extent of a single cell. grid_extent equals to the product of grid_size and cell_extent
+    'cell_extent': 0.1,                         # Extent of a single cell. grid_extent equals to the product of grid_size and cell_extent
 
     'mac_cormack' : False,
     'gauss_seidel_max_iterations' : 1000,
@@ -362,9 +362,6 @@ class Simulator(object):
                 else:
                     self.grid_velocity_z[i, j, k] -= scale * (self.pressure[i, j, k] - self.pressure[i, j, k - 1])
 
-
-
-
     @ti.kernel
     def advect_particles(self):
         # Forward Euler
@@ -389,14 +386,35 @@ class Simulator(object):
 
     @ti.kernel
     def enforce_boundary_condition(self):
-        for i, j, k in self.cell_type:
-            if self.cell_type[i, j, k] == SOLID:
-                self.grid_velocity_x[i, j, k] = 0.0
-                self.grid_velocity_x[i + 1, j, k] = 0.0
-                self.grid_velocity_y[i, j, k] = 0.0
-                self.grid_velocity_y[i, j + 1, k] = 0.0
-                self.grid_velocity_z[i, j, k] = 0.0
-                self.grid_velocity_z[i, j, k + 1] = 0.0
+        for i in range(self.grid_size[0]):
+            for j in range(self.grid_size[1]):
+                self.grid_velocity_z[i, j, 0] = 0
+                self.grid_velocity_z[i, j, 1] = 0
+                self.grid_velocity_z[i, j, self.grid_size[2]-1] = -9.8 * self.dt
+                self.grid_velocity_z[i, j, self.grid_size[2]] = -9.8 * self.dt
+
+        for j in range(self.grid_size[1]):
+            for k in range(self.grid_size[2]):
+                self.grid_velocity_x[0, j, k] = 0
+                self.grid_velocity_x[1, j, k] = 0
+                self.grid_velocity_x[self.grid_size[0]-1, j, k] = 0
+                self.grid_velocity_x[self.grid_size[0], j, k] = 0
+
+        for i in range(self.grid_size[0]):
+            for k in range(self.grid_size[2]):
+                self.grid_velocity_y[i, 0, k] = 0
+                self.grid_velocity_y[i, 1, k] = 0
+                self.grid_velocity_y[i, self.grid_size[1]-1, k] = 0
+                self.grid_velocity_y[i, self.grid_size[1], k] = 0
+
+        # for i, j, k in self.cell_type:
+        #     if self.cell_type[i, j, k] == SOLID:
+        #         self.grid_velocity_x[i, j, k] = 0.0
+        #         self.grid_velocity_x[i + 1, j, k] = 0.0
+        #         self.grid_velocity_y[i, j, k] = 0.0
+        #         self.grid_velocity_y[i, j + 1, k] = 0.0
+        #         self.grid_velocity_z[i, j, k] = 0.0
+        #         self.grid_velocity_z[i, j, k + 1] = 0.0
 
 
     @ti.kernel
@@ -456,7 +474,7 @@ class Simulator(object):
                     idx = (idx_side[i].x, idx_center[j].y, idx_center[k].z)
                     self.grid_velocity_x[idx] += vp.x * w
                     if self.mode == 'apic':
-                        dpos = ti.Vector([i-1, j-0.5, k-0.5]) - frac
+                        dpos = (ti.Vector([i-1, j-0.5, k-0.5]) - frac) * self.dx
                         self.grid_velocity_x[idx] += w * (cp @ dpos).x
                     self.grid_weight_x[idx] += w
 
@@ -467,7 +485,7 @@ class Simulator(object):
                     idx = (idx_center[i].x, idx_side[j].y, idx_center[k].z)
                     self.grid_velocity_y[idx] += vp.y * w
                     if self.mode == 'apic':
-                        dpos = ti.Vector([i-0.5, j-1, k-0.5]) - frac
+                        dpos = (ti.Vector([i-0.5, j-1, k-0.5]) - frac) * self.dx
                         self.grid_velocity_y[idx] += w * (cp @ dpos).y
                     self.grid_weight_y[idx] += w
 
@@ -480,7 +498,7 @@ class Simulator(object):
                     #     print('weight p2g:', w_center[i].x, w_center[j].y, w_side[k].z)
                     self.grid_velocity_z[idx] += vp.z * w
                     if self.mode == 'apic':
-                        dpos = ti.Vector([i-0.5, j-0.5, k-1]) - frac
+                        dpos = (ti.Vector([i-0.5, j-0.5, k-1]) - frac) * self.dx
                         self.grid_velocity_z[idx] += w * (cp @ dpos).z
                     self.grid_weight_z[idx] += w
 
@@ -521,7 +539,7 @@ class Simulator(object):
                         vx_d += vtemp - self.grid_velocity_x_last[idx] * w
                     if self.mode == 'apic':
                         dpos = ti.Vector([i-1, j-0.5, k-0.5]) - frac
-                        C_x += 4 * vtemp * dpos  / self.grid_size.x
+                        C_x += 4 * vtemp * dpos  / self.dx
                     wx += w
 
         for i in ti.static(range(3)):
@@ -535,7 +553,7 @@ class Simulator(object):
                         vy_d += vtemp - self.grid_velocity_y_last[idx] * w
                     if self.mode == 'apic':
                         dpos = ti.Vector([i-0.5, j-1, k-0.5]) - frac
-                        C_y += 4 * vtemp * dpos / self.grid_size.y
+                        C_y += 4 * vtemp * dpos / self.dx
                     wy += w
 
         for i in ti.static(range(3)):
@@ -549,7 +567,7 @@ class Simulator(object):
                         vz_d += vtemp - self.grid_velocity_z_last[idx] * w
                     if self.mode == 'apic':
                         dpos = ti.Vector([i-0.5, j-0.5, k-1]) - frac
-                        C_z += 4 * vtemp * dpos / self.grid_size.z
+                        C_z += 4 * vtemp * dpos / self.dx
                     wz += w
                     # if p == 15 and i == 0 and j == 0 and k == 1:
                     #     print('interp_particle000:', w_center[i].x, w_center[j].y, w_side[k].z, idx)
