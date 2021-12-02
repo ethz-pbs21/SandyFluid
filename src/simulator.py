@@ -5,7 +5,7 @@ from MGPCGSolver import MGPCGSolver
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'mode' : 'apic',                            # pic, apic, flip
+    'mode' : 'flip',                            # pic, apic, flip
     'flip_weight' : 1,                          # FLIP * flip_weight + PIC * (1 - flip_weight)
     'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
@@ -205,7 +205,6 @@ class Simulator(object):
         self.g2p()
         # print('Velocity after g2p:', self.particles_velocity[self.num_particles//2])
 
-
         # Advect particles
         self.advect_particles()
 
@@ -386,36 +385,38 @@ class Simulator(object):
 
     @ti.kernel
     def enforce_boundary_condition(self):
-        for i in range(self.grid_size[0]):
-            for j in range(self.grid_size[1]):
-                self.grid_velocity_z[i, j, 0] = 0
-                self.grid_velocity_z[i, j, 1] = 0
-                self.grid_velocity_z[i, j, self.grid_size[2]-1] = -9.8 * self.dt
-                self.grid_velocity_z[i, j, self.grid_size[2]] = -9.8 * self.dt
+        for i, j in ti.ndrange(self.grid_size[0], self.grid_size[1]):
+            self.grid_velocity_z[i, j, 0] = 0
+            self.grid_velocity_z[i, j, 1] = 0
+            self.grid_velocity_z[i, j, self.grid_size[2]-1] = -9.8 * self.dt
+            self.grid_velocity_z[i, j, self.grid_size[2]] = -9.8 * self.dt
+            if self.mode == 'flip':
+                self.grid_velocity_z_last[i, j, 0] = 0
+                self.grid_velocity_z_last[i, j, 1] = 0
+                self.grid_velocity_z_last[i, j, self.grid_size[2]-1] = 0
+                self.grid_velocity_z_last[i, j, self.grid_size[2]] = 0
 
-        for j in range(self.grid_size[1]):
-            for k in range(self.grid_size[2]):
-                self.grid_velocity_x[0, j, k] = 0
-                self.grid_velocity_x[1, j, k] = 0
-                self.grid_velocity_x[self.grid_size[0]-1, j, k] = 0
-                self.grid_velocity_x[self.grid_size[0], j, k] = 0
+        for j, k in ti.ndrange(self.grid_size[1], self.grid_size[2]):
+            self.grid_velocity_x[0, j, k] = 0
+            self.grid_velocity_x[1, j, k] = 0
+            self.grid_velocity_x[self.grid_size[0]-1, j, k] = 0
+            self.grid_velocity_x[self.grid_size[0], j, k] = 0
+            if self.mode == 'flip':
+                self.grid_velocity_x_last[0, j, k] = 0
+                self.grid_velocity_x_last[1, j, k] = 0
+                self.grid_velocity_x_last[self.grid_size[0]-1, j, k] = 0
+                self.grid_velocity_x_last[self.grid_size[0], j, k] = 0
 
-        for i in range(self.grid_size[0]):
-            for k in range(self.grid_size[2]):
-                self.grid_velocity_y[i, 0, k] = 0
-                self.grid_velocity_y[i, 1, k] = 0
-                self.grid_velocity_y[i, self.grid_size[1]-1, k] = 0
-                self.grid_velocity_y[i, self.grid_size[1], k] = 0
-
-        # for i, j, k in self.cell_type:
-        #     if self.cell_type[i, j, k] == SOLID:
-        #         self.grid_velocity_x[i, j, k] = 0.0
-        #         self.grid_velocity_x[i + 1, j, k] = 0.0
-        #         self.grid_velocity_y[i, j, k] = 0.0
-        #         self.grid_velocity_y[i, j + 1, k] = 0.0
-        #         self.grid_velocity_z[i, j, k] = 0.0
-        #         self.grid_velocity_z[i, j, k + 1] = 0.0
-
+        for i, k in ti.ndrange(self.grid_size[0], self.grid_size[2]):
+            self.grid_velocity_y[i, 0, k] = 0
+            self.grid_velocity_y[i, 1, k] = 0
+            self.grid_velocity_y[i, self.grid_size[1]-1, k] = 0
+            self.grid_velocity_y[i, self.grid_size[1], k] = 0
+            if self.mode == 'flip':
+                self.grid_velocity_y_last[i, 0, k] = 0
+                self.grid_velocity_y_last[i, 1, k] = 0
+                self.grid_velocity_y_last[i, self.grid_size[1]-1, k] = 0
+                self.grid_velocity_y_last[i, self.grid_size[1], k] = 0
 
     @ti.kernel
     def mark_cell_type(self):
@@ -584,7 +585,8 @@ class Simulator(object):
                                                     vzp * self.flip_weight + vz/wz * (1 - self.flip_weight)])
         else:
             self.particles_velocity[p] = ti.Vector([vx/wx, vy/wy, vz/wz])
-        self.particles_affine_C[p] = ti.Matrix.rows([C_x/wx, C_y/wy, C_z/wz])
+        if self.mode == 'apic':
+            self.particles_affine_C[p] = ti.Matrix.rows([C_x/wx, C_y/wy, C_z/wz])
 
     @ti.kernel
     def compute_divergence(self):
