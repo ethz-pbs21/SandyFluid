@@ -6,7 +6,7 @@ from MGPCGSolver import MGPCGSolver
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
     'mode' : 'flip',                            # pic, apic, flip
-    'flip_weight' : 1,                          # FLIP * flip_weight + PIC * (1 - flip_weight)
+    'flip_weight' : 0.99,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
     'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
@@ -183,6 +183,8 @@ class Simulator(object):
         #       'weight:', self.grid_weight_z[self.grid_size.x//2, self.grid_size.y//2, self.grid_size.z//2]
         #       )
 
+        self.enforce_boundary_condition()
+
         if self.mode == 'flip':
             self.grid_velocity_x_last.copy_from(self.grid_velocity_x)
             self.grid_velocity_y_last.copy_from(self.grid_velocity_y)
@@ -190,8 +192,6 @@ class Simulator(object):
 
         # Apply body force
         self.apply_force()
-
-        self.enforce_boundary_condition()
 
         self.compute_divergence()
 
@@ -249,7 +249,8 @@ class Simulator(object):
         #     self.particles_velocity[p] += self.dt * self.g
 
         for i, j, k in self.grid_velocity_z:
-            self.grid_velocity_z[i, j, k] -= 9.8 * self.dt
+            if k > 1:
+                self.grid_velocity_z[i, j, k] -= 9.8 * self.dt
 
     @ti.kernel
     def p2g(self):
@@ -388,35 +389,20 @@ class Simulator(object):
         for i, j in ti.ndrange(self.grid_size[0], self.grid_size[1]):
             self.grid_velocity_z[i, j, 0] = 0
             self.grid_velocity_z[i, j, 1] = 0
-            self.grid_velocity_z[i, j, self.grid_size[2]-1] = -9.8 * self.dt
-            self.grid_velocity_z[i, j, self.grid_size[2]] = -9.8 * self.dt
-            if self.mode == 'flip':
-                self.grid_velocity_z_last[i, j, 0] = 0
-                self.grid_velocity_z_last[i, j, 1] = 0
-                self.grid_velocity_z_last[i, j, self.grid_size[2]-1] = 0
-                self.grid_velocity_z_last[i, j, self.grid_size[2]] = 0
+            self.grid_velocity_z[i, j, self.grid_size[2]-1] = 0
+            self.grid_velocity_z[i, j, self.grid_size[2]] = 0
 
         for j, k in ti.ndrange(self.grid_size[1], self.grid_size[2]):
             self.grid_velocity_x[0, j, k] = 0
             self.grid_velocity_x[1, j, k] = 0
             self.grid_velocity_x[self.grid_size[0]-1, j, k] = 0
             self.grid_velocity_x[self.grid_size[0], j, k] = 0
-            if self.mode == 'flip':
-                self.grid_velocity_x_last[0, j, k] = 0
-                self.grid_velocity_x_last[1, j, k] = 0
-                self.grid_velocity_x_last[self.grid_size[0]-1, j, k] = 0
-                self.grid_velocity_x_last[self.grid_size[0], j, k] = 0
 
         for i, k in ti.ndrange(self.grid_size[0], self.grid_size[2]):
             self.grid_velocity_y[i, 0, k] = 0
             self.grid_velocity_y[i, 1, k] = 0
             self.grid_velocity_y[i, self.grid_size[1]-1, k] = 0
             self.grid_velocity_y[i, self.grid_size[1], k] = 0
-            if self.mode == 'flip':
-                self.grid_velocity_y_last[i, 0, k] = 0
-                self.grid_velocity_y_last[i, 1, k] = 0
-                self.grid_velocity_y_last[i, self.grid_size[1]-1, k] = 0
-                self.grid_velocity_y_last[i, self.grid_size[1], k] = 0
 
     @ti.kernel
     def mark_cell_type(self):
