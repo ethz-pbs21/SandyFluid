@@ -770,9 +770,9 @@ class Simulator(object):
     def update_sand_flowing(self):
         for i, j, k in self.sand_state:
             if self.is_fluid(i, j, k) and self.sand_state[i, j, k] == 0:
-                dsx = self.stress[i + 1, j, k] - self.stress[i, j, k]
-                dsy = self.stress[i, j + 1, k] - self.stress[i, j, k]
-                dsz = self.stress[i, j, k + 1] - self.stress[i, j, k]
+                dsx = self.stress[i, j, k] - self.stress[i - 1, j, k]
+                dsy = self.stress[i, j, k] - self.stress[i, j - 1, k]
+                dsz = self.stress[i, j, k] - self.stress[i, j, k - 1]
                 fx = (dsx[0, 0] + dsy[0, 1] + dsz[0, 2]) / self.dx
                 fy = (dsx[1, 0] + dsy[1, 1] + dsz[1, 2]) / self.dx
                 fz = (dsx[2, 0] + dsy[2, 1] + dsz[2, 2]) / self.dx
