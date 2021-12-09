@@ -2,11 +2,12 @@
 
 import taichi as ti
 from MGPCGSolver import MGPCGSolver
+import cc3d
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'mode' : 'flip',                            # pic, apic, flip
-    'flip_weight' : 1,                          # FLIP * flip_weight + PIC * (1 - flip_weight)
+    'mode' : 'pic',                            # pic, apic, flip
+    'flip_weight' : 0.99,                          # FLIP * flip_weight + PIC * (1 - flip_weight)
     'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
@@ -63,10 +64,10 @@ class Simulator(object):
         self.cur_step = 0
         self.t = 0.0
         # self.r_wind = ti.Vector.field(1, ti.i32, shape=(1))
-
+        self.mu = 0.6 # todo: friction coefficient
         self.init_fields()
 
-        self.init_particles((16, 16, 0), (48, 48, 60))  # todo
+        self.init_particles((16, 16, 30), (48, 48, 60))  # todo
 
         # pressure solver type
         self.use_mgpcg = get_param('use_mgpcg')
@@ -108,9 +109,14 @@ class Simulator(object):
         self.grid_weight_y = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1] + 1, self.grid_size[2]))
         self.grid_weight_z = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1], self.grid_size[2] + 1))
 
+        self.sand_state = ti.field(ti.i32, shape=self.grid_size)
         self.clear_grid()
         self.divergence = ti.field(ti.f32, shape=self.grid_size)
         self.new_pressure = ti.field(ti.f32, shape=self.grid_size)
+
+        self.stress = ti.Matrix.field(3, 3, dtype=ti.f32, shape=self.grid_size)
+        self.strain_rate = ti.Matrix.field(3, 3, dtype=ti.f32, shape=self.grid_size)
+        self.group_label = ti.field(ti.i16, shape=self.grid_size)
 
     # todo: this is only a very naive particle init method:
     # it just select a portion of the grid and fill one particle for each cell
@@ -201,6 +207,14 @@ class Simulator(object):
         # Accelerate velocity using the solved pressure
         self.project_velocity()
 
+        self.compute_stress()
+
+        self.friction_condition()
+
+        self.update_sand_rigid_group()
+
+        self.update_sand_flowing()
+
         # Gather properties (mainly velocity) from grid to particle
         self.g2p()
         # print('Velocity after g2p:', self.particles_velocity[self.num_particles//2])
@@ -222,6 +236,8 @@ class Simulator(object):
         self.grid_weight_x.fill(0.0)
         self.grid_weight_y.fill(0.0)
         self.grid_weight_z.fill(0.0)
+
+        self.sand_state.fill(0)
 
     # Helper
     @ti.func
@@ -650,6 +666,119 @@ class Simulator(object):
                                              self.damped_jacobi_weight * (p_x1 + p_x2 + p_y1 + p_y2 + p_z1 + p_z2 - div * self.rho / self.dt * (self.dx ** 2)) / n
             else:
                 self.new_pressure[i, j, k] = 0.0
+
+    @ti.kernel
+    def compute_stress(self):
+        for i, j, k in self.stress:
+            if self.is_fluid(i, j, k):
+                D = ti.Matrix.zero(ti.f32, 3, 3)
+                # 2 * ux, uy + vx, uz + wx
+                # vx + uy, 2 * vy, vz + wy
+                # wx + uz, wy + vz, 2 * wz
+                ux = self.grid_velocity_x[i + 1, j, k] - self.grid_velocity_x[i, j, k]
+                uy = self.grid_velocity_x[i, j + 1, k] - self.grid_velocity_x[i, j, k]
+                uz = self.grid_velocity_x[i, j, k + 1] - self.grid_velocity_x[i, j, k]
+                vx = self.grid_velocity_y[i + 1, j, k] - self.grid_velocity_y[i, j, k]
+                vy = self.grid_velocity_y[i, j + 1, k] - self.grid_velocity_y[i, j, k]
+                vz = self.grid_velocity_y[i, j, k + 1] - self.grid_velocity_y[i, j, k]
+                wx = self.grid_velocity_z[i + 1, j, k] - self.grid_velocity_z[i, j, k]
+                wy = self.grid_velocity_z[i, j + 1, k] - self.grid_velocity_z[i, j, k]
+                wz = self.grid_velocity_z[i, j, k + 1] - self.grid_velocity_z[i, j, k]
+
+                D[0, 0] = 2.0 * ux
+                D[0, 1] = uy + vx
+                D[0, 2] = uz + wx
+                D[1, 0] = vx + uy
+                D[1, 1] = 2.0 * vy
+                D[1, 2] = vz + wy
+                D[2, 0] = wx + uz
+                D[2, 1] = wy + vz
+                D[2, 2] = 2.0 * wz
+
+                D = D / 2.0 / self.dx
+                self.strain_rate[i, j, k] = D
+                self.stress[i, j, k] = -self.rho * D * self.dx * self.dx / self.dt
+
+    @ti.kernel
+    def friction_condition(self):
+        for i, j, k in self.stress:
+            if self.is_fluid(i, j, k):
+                D = self.strain_rate[i, j, k]
+                D_F_norm = ti.sqrt(D[0,0]**2 + D[0,1]**2 + D[0,2]**2 + D[1,0]**2 + D[1,1]**2 + D[1,2]**2
+                                 + D[2,0]**2 + D[2,1]**2 + D[2,2]**2)
+                stress_f = ti.Matrix.zero(ti.f32, 3, 3)
+                if D_F_norm > 1e-6:
+                    stress_f = -self.mu * self.pressure[i, j, k] * D / (ti.sqrt(1.0/3.0) * D_F_norm)
+
+                # todo: what does this mean? "the resulting σ_rigid satisfies the yield condition with the pressure we computed for incompressibility"
+                if True:
+                    self.stress[i, j, k] = stress_f
+                    self.sand_state[i, j, k] = 0 # flowing
+                else:
+                    self.sand_state[i, j, k] = 1 # rigidly moving
+
+
+    def update_sand_rigid_group(self):
+        states = self.sand_state.to_numpy()
+        labels_out = cc3d.connected_components(states, connectivity=6)
+        for label, group in cc3d.each(labels_out):
+            self.group_label.from_numpy(group)
+            self.update_sand_rigid_velocity()
+
+
+    @ti.kernel
+    def update_sand_rigid_velocity(self):
+        # update velocity for each rigid group
+        num = 0.0
+        velocity = ti.Vector([0.0, 0.0, 0.0], dt=ti.f32)
+        center_of_mass = ti.Vector([0.0, 0.0, 0.0], dt=ti.f32)
+        w = ti.Vector([0.0, 0.0, 0.0], dt=ti.f32)
+        for i, j, k in self.group_label:
+            if self.group_label[i, j, k] != 0:
+                ti.atomic_add(num, 1.0)
+                pos = ti.Vector([i+0.5, j+0.5, k+0.5], dt=ti.f32)
+                pos *= self.cell_extent
+                ti.atomic_add(center_of_mass, pos)
+
+        center_of_mass = center_of_mass / num
+
+        for i, j, k in self.group_label:
+            if self.group_label[i, j, k] != 0:
+                pos = ti.Vector([i + 0.5, j + 0.5, k + 0.5], dt=ti.f32)
+                pos *= self.cell_extent
+                v1 = (self.grid_velocity_x[i, j, k] + self.grid_velocity_x[i + 1, j, k]) / 2.0
+                v2 = (self.grid_velocity_y[i, j, k] + self.grid_velocity_y[i, j + 1, k]) / 2.0
+                v3 = (self.grid_velocity_z[i, j, k] + self.grid_velocity_z[i, j, k + 1]) / 2.0
+                v = ti.Vector([v1, v2, v3], dt=ti.f32)
+                ti.atomic_add(velocity, v)
+                # ti.atomic_add(w, ti.cross(pos, v)) #todo: ???
+                ti.atomic_add(w, ti.cross(pos - center_of_mass, v))
+
+        velocity = velocity / num
+        w = w / num
+
+        for i, j, k in self.group_label:
+            if self.group_label[i, j, k] != 0:
+                pos = ti.Vector([i, j, k], dt=ti.f32)
+                pos *= self.cell_extent
+                rigid_velocity = velocity #+ ti.cross(pos - center_of_mass, w) #todo: add angular velocity
+                self.grid_velocity_x[i, j, k] = rigid_velocity.x
+                self.grid_velocity_y[i, j, k] = rigid_velocity.y
+                self.grid_velocity_z[i, j, k] = rigid_velocity.z
+
+    @ti.kernel
+    def update_sand_flowing(self):
+        for i, j, k in self.sand_state:
+            if self.is_fluid(i, j, k) and self.sand_state[i, j, k] == 0:
+                dsx = self.stress[i + 1, j, k] - self.stress[i, j, k]
+                dsy = self.stress[i, j + 1, k] - self.stress[i, j, k]
+                dsz = self.stress[i, j, k + 1] - self.stress[i, j, k]
+                fx = (dsx[0, 0] + dsy[0, 1] + dsz[0, 2]) / self.dx
+                fy = (dsx[1, 0] + dsy[1, 1] + dsz[1, 2]) / self.dx
+                fz = (dsx[2, 0] + dsy[2, 1] + dsz[2, 2]) / self.dx
+                self.grid_velocity_x[i, j, k] += self.dt / self.rho * fx
+                self.grid_velocity_y[i, j, k] += self.dt / self.rho * fy
+                self.grid_velocity_z[i, j, k] += self.dt / self.rho * fz
 
 
 
