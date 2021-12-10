@@ -737,10 +737,18 @@ class Simulator(object):
                     stress_f = -self.mu * self.pressure[i, j, k] * D / (ti.sqrt(1.0/3.0) * D_F_norm)
 
                 # todo: what does this mean? "the resulting σ_rigid satisfies the yield condition with the pressure we computed for incompressibility"
-                if True:
+                stress_rigid = -self.rho * D * (self.dx ** 2) / self.dt
+                stress_m = stress_rigid.trace() / 3
+                stress_bar = stress_rigid - stress_m * ti.Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+                bar_F_norm = ti.sqrt(stress_bar[0,0]**2 + stress_bar[0,1]**2 + stress_bar[0,2]**2
+                                   + stress_bar[1,0]**2 + stress_bar[1,1]**2 + stress_bar[1,2]**2
+                                   + stress_bar[2,0]**2 + stress_bar[2,1]**2 + stress_bar[2,2]**2)
+                if self.mu * stress_m <= bar_F_norm * ti.sqrt(3/2):
                     self.stress[i, j, k] = stress_f
                     self.sand_state[i, j, k] = 0 # flowing
                 else:
+                    print('yield condition not met')
+                    self.stress[i, j, k] = stress_rigid
                     self.sand_state[i, j, k] = 1 # rigidly moving
 
 
@@ -778,7 +786,7 @@ class Simulator(object):
                 v = ti.Vector([v1, v2, v3], dt=ti.f32)
                 ti.atomic_add(velocity, v)
                 # ti.atomic_add(w, ti.cross(pos, v)) #todo: ???
-                ti.atomic_add(w, ti.cross(pos - center_of_mass, v))
+                ti.atomic_add(w, (pos - center_of_mass).cross(v))
 
         velocity = velocity / num
         w = w / num
@@ -787,7 +795,7 @@ class Simulator(object):
             if self.group_label[i, j, k] != 0:
                 pos = ti.Vector([i, j, k], dt=ti.f32)
                 pos *= self.cell_extent
-                rigid_velocity = velocity #+ ti.cross(pos - center_of_mass, w) #todo: add angular velocity
+                rigid_velocity = velocity + (pos - center_of_mass).cross(w) #todo: add angular velocity
                 self.grid_velocity_x[i, j, k] = rigid_velocity.x
                 self.grid_velocity_y[i, j, k] = rigid_velocity.y
                 self.grid_velocity_z[i, j, k] = rigid_velocity.z
