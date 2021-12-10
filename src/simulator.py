@@ -202,7 +202,7 @@ class Simulator(object):
 
     def reconstruct_mesh(self, resolution, name):
         if resolution is None:
-            resolution = (self.grid_size.x * 2, self.grid_size.y * 2, self.grid_size.z * 2)
+            resolution = (self.grid_size.x, self.grid_size.y, self.grid_size.z)
         f = self.metaball_scalar_field(resolution)
         vertices, triangles = mcubes.marching_cubes(f, 0.1)  # Threshold is picked arbitrarily
         mcubes.export_obj(vertices, triangles, '{0}.obj'.format(name))
