@@ -5,6 +5,7 @@ from MGPCGSolver import MGPCGSolver
 import mcubes
 import numpy as np
 import scipy.spatial
+import cc3d
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
