@@ -2,6 +2,9 @@
 
 import taichi as ti
 from MGPCGSolver import MGPCGSolver
+import mcubes
+import numpy as np
+import scipy
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
@@ -166,6 +169,42 @@ class Simulator(object):
         # Reset simulation state
         self.cur_step = 0
         self.t = 0.0
+
+    def metaball_scalar_field(self, resolution):
+        dx = self.grid_extent[0] / resolution[0]
+        dy = self.grid_extent[1] / resolution[1]
+        dz = self.grid_extent[2] / resolution[2]
+
+        ps = self.particles_position.to_numpy()
+        kdtree = scipy.spatial.KDTree(ps)
+        f = np.zeros(resolution)
+
+        radius = np.max([dx, dy, dz]) * 3.0  # The scale factor is picked arbitrarily
+
+        def metaball_kernel(x1, x2):
+            r = min(np.linalg.norm(x1-x2) / radius, 1.0)
+            return 1.0 - r**3*(r*(r*6.0 - 15.0) + 10.0)
+
+        for i in range(resolution[0]):
+            for j in range(resolution[1]):
+                for k in range(resolution[2]):
+                    x = i * dx
+                    y = j * dy
+                    z = k * dz
+                    c = np.array([x, y, z])
+                    p_indices = kdtree.query_ball_point(c, radius)
+                    for pi in p_indices:
+                        f[i,j,k] += metaball_kernel(c, ps[pi])
+
+        return f
+
+
+    def reconstruct_mesh(self, resolution, name):
+        if resolution is None:
+            resolution = (self.grid_size.x * 2, self.grid_size.y * 2, self.grid_size.z * 2)
+        f = self.metaball_scalar_field(resolution)
+        vertices, triangles = mcubes.marching_cubes(f, 0.1)  # Threshold is picked arbitrarily
+        mcubes.export_obj(vertices, triangles, '{0}.obj'.format(name))
 
 
     def step(self):

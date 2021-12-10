@@ -53,6 +53,7 @@ class SimulationGUI(object):
     def reset(self):
         self.t_sim = 0.0
         self.t_render = 0.0
+        self.export_mesh = False
 
     def reset_camera(self):
         # Offset the camera position from the center of the bound along -Y
@@ -87,8 +88,13 @@ class SimulationGUI(object):
         while self.window.running:
 
             # handle user input
-            # for e in self.gui.get_events(ti.GUI.PRESS):
-            #     self.gui_event_callback(e)
+            for e in self.window.get_events():
+                #if e.action == ti.ui.PRESS:
+                    self.gui_event_callback(e)
+
+            # Export the mesh if required
+            if self.export_mesh:
+                self.sim.reconstruct_mesh(None, self.sim.mode + '_' + str(self.sim.cur_step))
 
             # update sim parameters
             # self.sim.dt = self.time_step_slider.value
@@ -125,7 +131,7 @@ class SimulationGUI(object):
                 t_render_end = time.time()
                 self.t_render += t_render_end - t_render_beg
 
-    # def gui_event_callback(self, event):
+    def gui_event_callback(self, event):
     #     if event.key == " ":
     #         self.sim.paused = not self.sim.paused
     #     elif event.key == "r":
@@ -157,5 +163,12 @@ class SimulationGUI(object):
     #             self.min_accuracy_slider.value = max(self.min_accuracy_slider.value - 0.05, 1e-6)
     #         else:
     #             self.min_accuracy_slider.value = min(self.min_accuracy_slider.value + 0.05, 1.0)
+        if event.key == " ":    # Export mesh only for one frame
+            if not self.export_mesh:
+                self.sim.reconstruct_mesh(None, self.sim.mode + '_' + str(self.sim.cur_step))
+        elif event.key == "m":   # Toggle the flag to export mesh continuously
+            self.export_mesh = not self.export_mesh
+
+
 
 
