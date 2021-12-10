@@ -163,7 +163,7 @@ class SimulationGUI(object):
     #             self.min_accuracy_slider.value = max(self.min_accuracy_slider.value - 0.05, 1e-6)
     #         else:
     #             self.min_accuracy_slider.value = min(self.min_accuracy_slider.value + 0.05, 1.0)
-        if event.key == " ":    # Export mesh only for one frame
+        if event.key == "Space":    # Export mesh only for one frame
             if not self.export_mesh:
                 self.sim.reconstruct_mesh(None, self.sim.mode + '_' + str(self.sim.cur_step))
         elif event.key == "m":   # Toggle the flag to export mesh continuously

@@ -4,7 +4,7 @@ import taichi as ti
 from MGPCGSolver import MGPCGSolver
 import mcubes
 import numpy as np
-import scipy
+import scipy.spatial
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
@@ -185,6 +185,7 @@ class Simulator(object):
             r = min(np.linalg.norm(x1-x2) / radius, 1.0)
             return 1.0 - r**3*(r*(r*6.0 - 15.0) + 10.0)
 
+        # Too slow...
         for i in range(resolution[0]):
             for j in range(resolution[1]):
                 for k in range(resolution[2]):
