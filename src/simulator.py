@@ -67,7 +67,7 @@ class Simulator(object):
         self.cur_step = 0
         self.t = 0.0
         # self.r_wind = ti.Vector.field(1, ti.i32, shape=(1))
-        self.mu = 0.6 # todo: friction coefficient
+        self.mu = 3 # todo: friction coefficient
         self.init_fields()
 
         self.init_particles((16, 16, 30), (48, 48, 60))  # todo
@@ -794,8 +794,11 @@ class Simulator(object):
                 pos *= self.cell_extent
                 rigid_velocity = velocity #+ (pos - center_of_mass).cross(w) #todo: add angular velocity
                 self.grid_velocity_x[i, j, k] = rigid_velocity.x
+                self.grid_velocity_x[i + 1, j, k] = rigid_velocity.x
                 self.grid_velocity_y[i, j, k] = rigid_velocity.y
+                self.grid_velocity_y[i, j + 1, k] = rigid_velocity.y
                 self.grid_velocity_z[i, j, k] = rigid_velocity.z
+                self.grid_velocity_z[i, j, k + 1] = rigid_velocity.z
 
     @ti.kernel
     def update_sand_flowing(self):
