@@ -179,7 +179,7 @@ class Simulator(object):
         kdtree = scipy.spatial.KDTree(ps)
         f = np.zeros(resolution)
 
-        radius = np.max([dx, dy, dz]) * 3.0  # The scale factor is picked arbitrarily
+        radius = self.cell_extent * 2.0  # The scaling factor is picked arbitrarily
 
         def metaball_kernel(x1, x2):
             r = min(np.linalg.norm(x1-x2) / radius, 1.0)
