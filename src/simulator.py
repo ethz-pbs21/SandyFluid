@@ -791,7 +791,7 @@ class Simulator(object):
                 pos *= self.cell_extent
                 r = pos - center_of_mass
                 ti.atomic_add(L, r.cross(v))
-                ti.atomic_add(I_00, r.x ** 2 + r.y ** 2)
+                ti.atomic_add(I_00, r.x ** 2 + r.z ** 2)
                 ti.atomic_add(I_01, -r.x * r.y)
                 ti.atomic_add(I_02, -r.x * r.z)
                 ti.atomic_add(I_11, r.x ** 2 + r.z ** 2)
