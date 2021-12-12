@@ -57,6 +57,7 @@ class Simulator(object):
         # self.dx = 1.0 / self.grid_size[0] # todo
         self.dx = self.cell_extent
 
+
         self.rho = get_param('rho')
 
         self.num_jacobi_iter = get_param('num_jacobi_iter')
@@ -70,6 +71,8 @@ class Simulator(object):
         self.init_fields()
 
         self.init_particles((16, 16, 0), (48, 48, 60))  # todo
+
+
 
         # pressure solver type
         self.use_mgpcg = get_param('use_mgpcg')
@@ -175,28 +178,41 @@ class Simulator(object):
         dy = self.grid_extent[1] / resolution[1]
         dz = self.grid_extent[2] / resolution[2]
 
-        ps = self.particles_position.to_numpy()
-        kdtree = scipy.spatial.KDTree(ps)
-        f = np.zeros(resolution)
+        # The scaling factor is picked arbitrarily
+        radius = self.cell_extent * 2.0
 
-        radius = self.cell_extent * 2.0  # The scaling factor is picked arbitrarily
+        particle_pos = self.particles_position.to_numpy()
+        kdtree = scipy.spatial.KDTree(particle_pos)
 
-        def metaball_kernel(x1, x2):
-            r = min(np.linalg.norm(x1-x2) / radius, 1.0)
-            return 1.0 - r**3*(r*(r*6.0 - 15.0) + 10.0)
+        # We are picking scalar values at vertices of a cell rather than the center
+        # Also, step out one cell's distance to completely include the simulation region
+        f_shape = (resolution[0]+3, resolution[1]+3, resolution[2]+3)
+        i, j, k = np.mgrid[:f_shape[0], :f_shape[1], :f_shape[2]] - 1
+
+        x = i * dx
+        y = j * dy
+        z = k * dz
+        field_pos = np.stack((x, y, z), axis=3)
+        # print(field_pos.shape)
+        particle_indices = kdtree.query_ball_point(field_pos, radius, workers=-1)
+        # print(p_indices.shape)
+
+        f = np.zeros(f_shape)
+
+        def metaball_eval(p1, p2s):
+            if p2s is None:
+                return 0.0
+            r = np.clip(np.linalg.norm(p1 - p2s, axis=1) / radius, 0.0, 1.0)
+            return (1.0 - r ** 3 * (r * (r * 6.0 - 15.0) + 10.0)).sum()
 
         # Too slow...
-        for i in range(resolution[0]):
-            for j in range(resolution[1]):
-                for k in range(resolution[2]):
-                    x = i * dx
-                    y = j * dy
-                    z = k * dz
-                    c = np.array([x, y, z])
-                    p_indices = kdtree.query_ball_point(c, radius)
-                    for pi in p_indices:
-                        f[i,j,k] += metaball_kernel(c, ps[pi])
-
+        for ii in range(resolution[0]):
+            for jj in range(resolution[1]):
+                for kk in range(resolution[2]):
+                    idx = (ii, jj, kk)
+                    p1 = np.array([x[idx], y[idx], z[idx]])
+                    p2s = np.array([particle_pos[p2_idx] for p2_idx in particle_indices[idx]]) if particle_indices[idx] else None
+                    f[idx] = metaball_eval(p1, p2s)
         return f
 
 
@@ -204,7 +220,7 @@ class Simulator(object):
         if resolution is None:
             resolution = (self.grid_size.x, self.grid_size.y, self.grid_size.z)
         f = self.metaball_scalar_field(resolution)
-        vertices, triangles = mcubes.marching_cubes(f, 0.1)  # Threshold is picked arbitrarily
+        vertices, triangles = mcubes.marching_cubes(f, 1.5)  # Threshold is picked arbitrarily
         mcubes.export_obj(vertices, triangles, '{0}.obj'.format(name))
 
 
