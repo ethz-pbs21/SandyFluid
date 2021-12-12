@@ -14,6 +14,7 @@ global_params = {
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
     'grid_size' : (64, 64, 64),                 # Grid size (integer)
+    'reconstruct_resolution': (100, 100, 100),  # Mesh surface reconstruction grid resolution
     'cell_extent': 0.1,                         # Extent of a single cell. grid_extent equals to the product of grid_size and cell_extent
 
     'mac_cormack' : False,
@@ -57,6 +58,7 @@ class Simulator(object):
         # self.dx = 1.0 / self.grid_size[0] # todo
         self.dx = self.cell_extent
 
+        self.reconstruct_resolution = get_param('reconstruct_resolution')
 
         self.rho = get_param('rho')
 
@@ -179,7 +181,7 @@ class Simulator(object):
         dz = self.grid_extent[2] / resolution[2]
 
         # The scaling factor is picked arbitrarily
-        radius = self.cell_extent * 2.0
+        radius = self.cell_extent * 1.5
 
         particle_pos = self.particles_position.to_numpy()
         kdtree = scipy.spatial.KDTree(particle_pos)
@@ -218,8 +220,9 @@ class Simulator(object):
 
     def reconstruct_mesh(self, resolution, name):
         if resolution is None:
-            resolution = (self.grid_size.x, self.grid_size.y, self.grid_size.z)
-        f = self.metaball_scalar_field(resolution)
+            scale = 2
+            resolution = (self.grid_size.x * scale, self.grid_size.y * scale, self.grid_size.z * scale)
+        f = self.metaball_scalar_field(self.reconstruct_resolution) #resolution)
         vertices, triangles = mcubes.marching_cubes(f, 1.5)  # Threshold is picked arbitrarily
         mcubes.export_obj(vertices, triangles, '{0}.obj'.format(name))
 
