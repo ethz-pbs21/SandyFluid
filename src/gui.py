@@ -88,7 +88,7 @@ class SimulationGUI(object):
         while self.window.running:
 
             # handle user input
-            for e in self.window.get_events():
+            for e in self.window.get_events(tag='Press'):
                 #if e.action == ti.ui.PRESS:
                     self.gui_event_callback(e)
 
