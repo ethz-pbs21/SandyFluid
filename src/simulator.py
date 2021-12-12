@@ -72,7 +72,7 @@ class Simulator(object):
         self.b_mu  = 0.8 # boundary friction coefficient
         self.init_fields()
 
-        self.init_particles((16, 16, 0), (48, 48, 40))  # todo
+        self.init_particles((0, 0, 0), (30, 30, 40))  # todo
 
         # pressure solver type
         self.use_mgpcg = get_param('use_mgpcg')
@@ -436,34 +436,34 @@ class Simulator(object):
             for i in ti.static(range(3)):
                 if pos[i] <= self.cell_extent:
                     pos[i] = self.cell_extent
-                    v[i] = 0
+                    # v[i] = 0
                 if pos[i] >= self.grid_extent[i]-self.cell_extent:
                     pos[i] = self.grid_extent[i]-self.cell_extent
-                    v[i] = 0
+                    # v[i] = 0
 
-            # if pos[0] <= self.cell_extent * 2 or pos[0] >= self.grid_extent[0]-2 * self.cell_extent:
-            #     vn = v[0]
-            #     v[0] = 0.0
-            #     vt = ti.Vector([0.0, v[1], v[2]], dt=ti.f32)
-            #     vt = ti.max(0, 1 - self.b_mu * ti.abs(vn) / vt.norm()) * vt
-            #     v[1] = vt[1]
-            #     v[2] = vt[2]
-            #
-            # if pos[1] <= self.cell_extent * 2 or pos[1] >= self.grid_extent[1]-2 * self.cell_extent:
-            #     vn = v[1]
-            #     v[1] = 0.0
-            #     vt = ti.Vector([v[0], 0.0, v[2]], dt=ti.f32)
-            #     vt = ti.max(0, 1 - self.b_mu * ti.abs(vn) / vt.norm()) * vt
-            #     v[0] = vt[0]
-            #     v[2] = vt[2]
-            #
-            # if pos[2] <= self.cell_extent * 2 or pos[2] >= self.grid_extent[2]-2 * self.cell_extent:
-            #     vn = v[2]
-            #     v[2] = 0.0
-            #     vt = ti.Vector([v[0], v[1], 0.0], dt=ti.f32)
-            #     vt = ti.max(0, 1 - self.b_mu * ti.abs(vn) / vt.norm()) * vt
-            #     v[1] = vt[1]
-            #     v[0] = vt[0]
+            if pos[0] <= self.cell_extent * 2 or pos[0] >= self.grid_extent[0]-2 * self.cell_extent:
+                vn = v[0]
+                v[0] = 0.0
+                vt = ti.Vector([0.0, v[1], v[2]], dt=ti.f32)
+                vt = ti.max(0, 1 - self.b_mu * ti.abs(vn) / vt.norm()) * vt
+                v[1] = vt[1]
+                v[2] = vt[2]
+
+            if pos[1] <= self.cell_extent * 2 or pos[1] >= self.grid_extent[1]-2 * self.cell_extent:
+                vn = v[1]
+                v[1] = 0.0
+                vt = ti.Vector([v[0], 0.0, v[2]], dt=ti.f32)
+                vt = ti.max(0, 1 - self.b_mu * ti.abs(vn) / vt.norm()) * vt
+                v[0] = vt[0]
+                v[2] = vt[2]
+
+            if pos[2] <= self.cell_extent * 2 or pos[2] >= self.grid_extent[2]-2 * self.cell_extent:
+                vn = v[2]
+                v[2] = 0.0
+                vt = ti.Vector([v[0], v[1], 0.0], dt=ti.f32)
+                vt = ti.max(0, 1 - self.b_mu * ti.abs(vn) / vt.norm()) * vt
+                v[1] = vt[1]
+                v[0] = vt[0]
 
             self.particles_position[p] = pos
             self.particles_velocity[p] = v
