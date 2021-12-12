@@ -229,7 +229,7 @@ class Simulator(object):
         f = self.metaball_scalar_field(self.reconstruct_resolution)
         vertices, triangles = mcubes.marching_cubes(f, self.reconstruct_threshold)  # Threshold is picked arbitrarily
         os.makedirs(self.result_dir, exist_ok=True)
-        name = os.path.join(self.result_dir, '{0}_{1}_{2}s.obj'.format(self.mode, self.cur_step, round(self.t, 2)))
+        name = os.path.join(self.result_dir, '{0}_{1}_{2}s.obj'.format(self.mode, self.cur_step, round(self.t, 3)))
         mcubes.export_obj(vertices, triangles, name)
 
 
