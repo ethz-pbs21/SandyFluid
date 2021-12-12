@@ -94,7 +94,7 @@ class SimulationGUI(object):
 
             # Export the mesh if required
             if self.export_mesh:
-                self.sim.reconstruct_mesh(None, self.sim.mode + '_' + str(self.sim.cur_step))
+                self.sim.reconstruct_mesh()
 
             # update sim parameters
             # self.sim.dt = self.time_step_slider.value
@@ -165,7 +165,7 @@ class SimulationGUI(object):
     #             self.min_accuracy_slider.value = min(self.min_accuracy_slider.value + 0.05, 1.0)
         if event.key == "Space":    # Export mesh only for one frame
             if not self.export_mesh:
-                self.sim.reconstruct_mesh(None, self.sim.mode + '_' + str(self.sim.cur_step))
+                self.sim.reconstruct_mesh()
         elif event.key == "m":   # Toggle the flag to export mesh continuously
             self.export_mesh = not self.export_mesh
 

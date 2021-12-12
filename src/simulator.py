@@ -5,17 +5,21 @@ from MGPCGSolver import MGPCGSolver
 import mcubes
 import numpy as np
 import scipy.spatial
+import os
+import time
 
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'mode' : 'flip',                            # pic, apic, flip
+    'mode' : 'apic',                            # pic, apic, flip
     'flip_weight' : 0.99,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
-    'dt' : 0.01,                                # Time step
+    'dt' : 1/60,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
     'grid_size' : (64, 64, 64),                 # Grid size (integer)
-    'reconstruct_resolution': (100, 100, 100),  # Mesh surface reconstruction grid resolution
     'cell_extent': 0.1,                         # Extent of a single cell. grid_extent equals to the product of grid_size and cell_extent
+    'reconstruct_resolution': (100, 100, 100),  # Mesh surface reconstruction grid resolution
+    'reconstruct_threshold' : 0.75,              # Threshold of the metaball scalar fields
+    'reconstruct_radius' : 0.1,                 # Radius of the metaball
 
     'mac_cormack' : False,
     'gauss_seidel_max_iterations' : 1000,
@@ -59,6 +63,8 @@ class Simulator(object):
         self.dx = self.cell_extent
 
         self.reconstruct_resolution = get_param('reconstruct_resolution')
+        self.reconstruct_threshold = get_param('reconstruct_threshold')
+        self.reconstruct_radius = get_param('reconstruct_radius')
 
         self.rho = get_param('rho')
 
@@ -74,7 +80,9 @@ class Simulator(object):
 
         self.init_particles((16, 16, 0), (48, 48, 60))  # todo
 
-
+        self.datetime = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime())
+        self.proj_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+        self.result_dir = os.path.join(self.proj_dir, 'results', self.datetime)
 
         # pressure solver type
         self.use_mgpcg = get_param('use_mgpcg')
@@ -180,8 +188,7 @@ class Simulator(object):
         dy = self.grid_extent[1] / resolution[1]
         dz = self.grid_extent[2] / resolution[2]
 
-        # The scaling factor is picked arbitrarily
-        radius = self.cell_extent * 1.5
+        radius = self.reconstruct_radius
 
         particle_pos = self.particles_position.to_numpy()
         kdtree = scipy.spatial.KDTree(particle_pos)
@@ -218,13 +225,12 @@ class Simulator(object):
         return f
 
 
-    def reconstruct_mesh(self, resolution, name):
-        if resolution is None:
-            scale = 2
-            resolution = (self.grid_size.x * scale, self.grid_size.y * scale, self.grid_size.z * scale)
-        f = self.metaball_scalar_field(self.reconstruct_resolution) #resolution)
-        vertices, triangles = mcubes.marching_cubes(f, 1.5)  # Threshold is picked arbitrarily
-        mcubes.export_obj(vertices, triangles, '{0}.obj'.format(name))
+    def reconstruct_mesh(self):
+        f = self.metaball_scalar_field(self.reconstruct_resolution)
+        vertices, triangles = mcubes.marching_cubes(f, self.reconstruct_threshold)  # Threshold is picked arbitrarily
+        os.makedirs(self.result_dir, exist_ok=True)
+        name = os.path.join(self.result_dir, '{0}_{1}_{2}s.obj'.format(self.mode, self.cur_step, round(self.t, 2)))
+        mcubes.export_obj(vertices, triangles, name)
 
 
     def step(self):
