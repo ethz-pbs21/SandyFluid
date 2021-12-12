@@ -854,7 +854,7 @@ class Simulator(object):
 
         for i, j, k in self.group_label:
             if self.group_label[i, j, k] != 0:
-                # if num < 3 or ti.abs(w.x) > 1.0 or ti.abs(w.y) > 1.0 or ti.abs(w.z) > 1.0 :
+                if num < 3 or ti.abs(w.x) > 1.0 or ti.abs(w.y) > 1.0 or ti.abs(w.z) > 1.0 :
                     rigid_velocity = velocity  # + (pos - center_of_mass).cross(w) #todo: add angular velocity
                     self.grid_velocity_x[i, j, k] = rigid_velocity.x
                     self.grid_velocity_x[i + 1, j, k] = rigid_velocity.x
@@ -862,36 +862,36 @@ class Simulator(object):
                     self.grid_velocity_y[i, j + 1, k] = rigid_velocity.y
                     self.grid_velocity_z[i, j, k] = rigid_velocity.z
                     self.grid_velocity_z[i, j, k + 1] = rigid_velocity.z
-                # else:
-                #     pos = ti.Vector([i, j + 0.5, k + 0.5], dt=ti.f32)
-                #     pos *= self.cell_extent
-                #     rigid_velocity = velocity + (pos - center_of_mass).cross(w)
-                #     self.grid_velocity_x[i, j, k] = rigid_velocity.x
-                #
-                #     pos = ti.Vector([i + 1.0, j + 0.5, k + 0.5], dt=ti.f32)
-                #     pos *= self.cell_extent
-                #     rigid_velocity = velocity + (pos - center_of_mass).cross(w)
-                #     self.grid_velocity_x[i + 1, j, k] = rigid_velocity.x
-                #
-                #     pos = ti.Vector([i + 0.5, j, k + 0.5], dt=ti.f32)
-                #     pos *= self.cell_extent
-                #     rigid_velocity = velocity + (pos - center_of_mass).cross(w)
-                #     self.grid_velocity_y[i, j, k] = rigid_velocity.y
-                #
-                #     pos = ti.Vector([i + 0.5, j + 1.0, k + 0.5], dt=ti.f32)
-                #     pos *= self.cell_extent
-                #     rigid_velocity = velocity + (pos - center_of_mass).cross(w)
-                #     self.grid_velocity_y[i, j + 1, k] = rigid_velocity.y
-                #
-                #     pos = ti.Vector([i + 0.5, j + 0.5, k], dt=ti.f32)
-                #     pos *= self.cell_extent
-                #     rigid_velocity = velocity + (pos - center_of_mass).cross(w)
-                #     self.grid_velocity_z[i, j, k] = rigid_velocity.z
-                #
-                #     pos = ti.Vector([i + 0.5, j + 0.5, k + 1.0], dt=ti.f32)
-                #     pos *= self.cell_extent
-                #     rigid_velocity = velocity + (pos - center_of_mass).cross(w)
-                #     self.grid_velocity_z[i, j, k + 1] = rigid_velocity.z
+                else:
+                    pos = ti.Vector([float(i), float(j) + 0.5, float(k) + 0.5], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_x[i, j, k] = rigid_velocity.x
+
+                    pos = ti.Vector([float(i) + 1.0, float(j) + 0.5, float(k) + 0.5], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_x[i + 1, j, k] = rigid_velocity.x
+
+                    pos = ti.Vector([float(i) + 0.5, float(j), float(k) + 0.5], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_y[i, j, k] = rigid_velocity.y
+
+                    pos = ti.Vector([float(i) + 0.5, float(j) + 1.0, float(k) + 0.5], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_y[i, j + 1, k] = rigid_velocity.y
+
+                    pos = ti.Vector([float(i) + 0.5, float(j) + 0.5, float(k)], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_z[i, j, k] = rigid_velocity.z
+
+                    pos = ti.Vector([float(i) + 0.5, float(j) + 0.5, float(k) + 1.0], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_z[i, j, k + 1] = rigid_velocity.z
 
     @ti.kernel
     def update_sand_flowing(self):
