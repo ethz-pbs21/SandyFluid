@@ -1,4 +1,4 @@
-taichi==0.7.32
+taichi==0.8.7
 numpy
 scipy
 PyMCubes
