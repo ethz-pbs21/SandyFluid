@@ -9,7 +9,7 @@ import os
 import time
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'mode' : 'pic',                             # pic, apic, flip
+    'mode' : 'flip',                            # pic, apic, flip
     'flip_weight' : 0.95,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
     'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
@@ -24,10 +24,10 @@ global_params = {
     'num_jacobi_iter' : 100,                    # Number of iterations for pressure solving
     'damped_jacobi_weight' : 1.0,               # Damping weighte in damped jacobi
 
-    'simulate_sand': False,                     # Simulate sand or water
+    'simulate_sand': True,                     # Simulate sand or water
     'sand_dt': 0.001,                           # Time step for simulating sand
 
-    'scene_init': 0,                            # Choose from 0, 1, 2 to init the particle positions differently
+    'scene_init': 2,                            # Choose from 0, 1, 2 to init the particle positions differently
 }
 
 FLUID = 0
@@ -86,9 +86,9 @@ class Simulator(object):
 
         self.scene_init = get_param('scene_init')
         if self.scene_init == 0:
-            self.init_particles((16, 16, 0), (48, 48, 45))
+            self.init_particles((16, 16, 0), (48, 48, 40))
         elif self.scene_init == 1:
-            self.init_particles((16, 16, 16), (48, 48, 60))
+            self.init_particles((16, 16, 12), (48, 48, 56))
         elif self.scene_init == 2:
             self.init_particles((0, 0, 0), (30, 30, 40))
 
