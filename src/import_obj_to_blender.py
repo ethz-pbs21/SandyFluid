@@ -30,7 +30,7 @@
 # Many thanks to: https://www.blender.org/forum/viewtopic.php?t=23355
 
 # Only tested on Blender 2.79
-# To export the sequence to an Alembic (.abc), see
+# To export the sequence to an Alembic (.abc), see (dont forget the Displace Modifier)
 # https://www.youtube.com/watch?v=Kx4IU8lUCDs&list=PLxQxoABIf8KYi8c_gVqUGSfIUyxX-NrKf
 
 import bpy
@@ -42,7 +42,7 @@ path = r'D:\Projects\SandyFluid\results\2021-12-12_16-26-22\*.obj'      # <-----
 obj_files = glob.glob( path )
 # Our file name is like 'apic_100_1.667s.obj'
 # Sort according to frame number
-obj_files = sorted(obj_files, key=lambda path: int(os.path.basename(path).split('_')[1]))
+obj_files = sorted(obj_files, key=lambda path: int(os.path.basename(path).split('_')[1].split('.')[0]))
 
 for iObj,fn in enumerate(obj_files):
 

@@ -12,7 +12,7 @@ import time
 global_params = {
     'mode' : 'apic',                            # pic, apic, flip
     'flip_weight' : 0.99,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
-    'dt' : 0.001,                                # Time step
+    'dt' : 1/600,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
     'grid_size' : (64, 64, 64),                 # Grid size (integer)
@@ -232,12 +232,14 @@ class Simulator(object):
         return f
 
 
-    def reconstruct_mesh(self):
+    def reconstruct_mesh(self, filename=None):
         f = self.metaball_scalar_field(self.reconstruct_resolution)
         vertices, triangles = mcubes.marching_cubes(f, self.reconstruct_threshold)  # Threshold is picked arbitrarily
         os.makedirs(self.result_dir, exist_ok=True)
-        name = os.path.join(self.result_dir, '{0}_{1}_{2}s.obj'.format(self.mode, self.cur_step, round(self.t, 3)))
-        mcubes.export_obj(vertices, triangles, name)
+        if filename is None:
+            filename = '{0}_{1:04d}_{2}s.obj'.format(self.mode, self.cur_step, round(self.t, 3))
+        path = os.path.join(self.result_dir, filename)
+        mcubes.export_obj(vertices, triangles, path)
 
 
     def step(self):

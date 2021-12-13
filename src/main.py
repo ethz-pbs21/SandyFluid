@@ -4,16 +4,19 @@ import taichi as ti
 import sys
 
 if __name__ == "__main__":
-    
+
     ti.init(arch=ti.cuda)
 
-    num_step = int(sys.argv[1]) if len(sys.argv) >= 2 else None
+    n_frame = int(sys.argv[1]) if len(sys.argv) >= 2 else None
+    reconstruct_step = int(sys.argv[2]) if len(sys.argv) >= 3 else 1
+
     sim = Simulator()
-    if num_step is None:
+    if n_frame is None:
         gui = SimulationGUI(sim)
         gui.run()
     else:
-        for i in range(num_step):
-            print('step {0} of {1}'.format(i, num_step-1))
-            sim.reconstruct_mesh()
-            sim.step()
+        for i in range(n_frame):
+            print('frame {0} of {1}'.format(i, n_frame - 1))
+            sim.reconstruct_mesh('{0}_{1:04d}.obj'.format(sim.mode, i))
+            for j in range(reconstruct_step):
+                sim.step()
