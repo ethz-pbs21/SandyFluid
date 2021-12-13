@@ -35,9 +35,25 @@ global_params = {
 }
 ```
 
-Run with GGUI
+Run with GGUI:
 ```bash
 python main.py
+```
+
+During running with GUI, you can press `Space` to reconstruct the mesh of current frame and export that into a obj model file. The output will reside in ../results.
+
+You can also run without GUI and reconstruct each frame:
+
+```bash
+python main.py 300
+```
+
+where the simulation contains 300 frames.
+
+If the simulation dt is too small, add a second cmdline argument to reconstruct surface every few number of simulation steps:
+
+```bash
+python main.py 300 10
 ```
 
 ##### Dependencies
@@ -47,5 +63,4 @@ python main.py
 - scipy
 - PyMCubes
 - connected-components-3d
-
 
