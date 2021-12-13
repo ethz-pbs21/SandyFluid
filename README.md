@@ -4,4 +4,4 @@
 - numpy
 - scipy
 - PyMCubes
-
+- connected-components-3d

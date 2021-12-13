@@ -5,14 +5,14 @@ from MGPCGSolver import MGPCGSolver
 import mcubes
 import numpy as np
 import scipy.spatial
+import cc3d
 import os
 import time
-
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
     'mode' : 'apic',                            # pic, apic, flip
     'flip_weight' : 0.99,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
-    'dt' : 1/60,                                # Time step
+    'dt' : 0.001,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
     'grid_size' : (64, 64, 64),                 # Grid size (integer)
@@ -75,10 +75,12 @@ class Simulator(object):
         self.cur_step = 0
         self.t = 0.0
         # self.r_wind = ti.Vector.field(1, ti.i32, shape=(1))
+        self.mu = 0.6 # todo: friction coefficient
 
+        self.b_mu  = 0.8 # boundary friction coefficient
         self.init_fields()
 
-        self.init_particles((16, 16, 0), (48, 48, 60))  # todo
+        self.init_particles((0, 0, 0), (30, 30, 40))  # todo
 
         self.datetime = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime())
         self.proj_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -124,9 +126,14 @@ class Simulator(object):
         self.grid_weight_y = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1] + 1, self.grid_size[2]))
         self.grid_weight_z = ti.field(ti.f32, shape=(self.grid_size[0], self.grid_size[1], self.grid_size[2] + 1))
 
+        self.sand_state = ti.field(ti.i32, shape=self.grid_size)
         self.clear_grid()
         self.divergence = ti.field(ti.f32, shape=self.grid_size)
         self.new_pressure = ti.field(ti.f32, shape=self.grid_size)
+
+        self.stress = ti.Matrix.field(3, 3, dtype=ti.f32, shape=self.grid_size)
+        self.strain_rate = ti.Matrix.field(3, 3, dtype=ti.f32, shape=self.grid_size)
+        self.group_label = ti.field(ti.i16, shape=self.grid_size)
 
     # todo: this is only a very naive particle init method:
     # it just select a portion of the grid and fill one particle for each cell
@@ -266,6 +273,16 @@ class Simulator(object):
         # Accelerate velocity using the solved pressure
         self.project_velocity()
 
+        self.compute_stress()
+
+        self.friction_condition()
+
+        self.update_sand_rigid_group()
+
+        self.update_sand_flowing()
+
+        # self.enforce_frictional_boundary()
+
         # Gather properties (mainly velocity) from grid to particle
         self.g2p()
         # print('Velocity after g2p:', self.particles_velocity[self.num_particles//2])
@@ -287,6 +304,8 @@ class Simulator(object):
         self.grid_weight_x.fill(0.0)
         self.grid_weight_y.fill(0.0)
         self.grid_weight_z.fill(0.0)
+
+        self.sand_state.fill(0)
 
     # Helper
     @ti.func
@@ -441,10 +460,34 @@ class Simulator(object):
             for i in ti.static(range(3)):
                 if pos[i] <= self.cell_extent:
                     pos[i] = self.cell_extent
-                    v[i] = 0
+                    # v[i] = 0
                 if pos[i] >= self.grid_extent[i]-self.cell_extent:
                     pos[i] = self.grid_extent[i]-self.cell_extent
-                    v[i] = 0
+                    # v[i] = 0
+
+            if pos[0] <= self.cell_extent * 2 or pos[0] >= self.grid_extent[0]-2 * self.cell_extent:
+                vn = v[0]
+                v[0] = 0.0
+                vt = ti.Vector([0.0, v[1], v[2]], dt=ti.f32)
+                vt = ti.max(0, 1 - self.b_mu * ti.abs(vn) / vt.norm()) * vt
+                v[1] = vt[1]
+                v[2] = vt[2]
+
+            if pos[1] <= self.cell_extent * 2 or pos[1] >= self.grid_extent[1]-2 * self.cell_extent:
+                vn = v[1]
+                v[1] = 0.0
+                vt = ti.Vector([v[0], 0.0, v[2]], dt=ti.f32)
+                vt = ti.max(0, 1 - self.b_mu * ti.abs(vn) / vt.norm()) * vt
+                v[0] = vt[0]
+                v[2] = vt[2]
+
+            if pos[2] <= self.cell_extent * 2 or pos[2] >= self.grid_extent[2]-2 * self.cell_extent:
+                vn = v[2]
+                v[2] = 0.0
+                vt = ti.Vector([v[0], v[1], 0.0], dt=ti.f32)
+                vt = ti.max(0, 1 - self.b_mu * ti.abs(vn) / vt.norm()) * vt
+                v[1] = vt[1]
+                v[0] = vt[0]
 
             self.particles_position[p] = pos
             self.particles_velocity[p] = v
@@ -702,7 +745,272 @@ class Simulator(object):
             else:
                 self.new_pressure[i, j, k] = 0.0
 
+    @ti.kernel
+    def compute_stress(self):
+        for i, j, k in self.stress:
+            if self.is_fluid(i, j, k):
+                D = ti.Matrix.zero(ti.f32, 3, 3)
+                # 2 * ux, uy + vx, uz + wx
+                # vx + uy, 2 * vy, vz + wy
+                # wx + uz, wy + vz, 2 * wz
+                ux = self.grid_velocity_x[i + 1, j, k] - self.grid_velocity_x[i, j, k]
+                # uy = self.grid_velocity_x[i, j + 1, k] - self.grid_velocity_x[i, j, k]
+                uy = 0.25 * (self.grid_velocity_x[i, j + 1, k] + self.grid_velocity_x[i + 1, j + 1, k])\
+                     - 0.25 * (self.grid_velocity_x[i, j - 1, k] + self.grid_velocity_x[i + 1, j - 1, k])
+                # uz = self.grid_velocity_x[i, j, k + 1] - self.grid_velocity_x[i, j, k]
+                uz = 0.25 * (self.grid_velocity_x[i, j, k + 1] + self.grid_velocity_x[i + 1, j, k + 1])\
+                     - 0.25 * (self.grid_velocity_x[i, j, k - 1] + self.grid_velocity_x[i + 1, j, k - 1])
+                # vx = self.grid_velocity_y[i + 1, j, k] - self.grid_velocity_y[i, j, k]
+                vx = 0.25 * (self.grid_velocity_y[i + 1, j, k] + self.grid_velocity_y[i + 1, j + 1, k])\
+                     - 0.25 * (self.grid_velocity_y[i - 1, j, k] + self.grid_velocity_y[i - 1, j + 1, k])
+                vy = self.grid_velocity_y[i, j + 1, k] - self.grid_velocity_y[i, j, k]
+                # vz = self.grid_velocity_y[i, j, k + 1] - self.grid_velocity_y[i, j, k]
+                vz = 0.25 * (self.grid_velocity_y[i, j, k + 1] + self.grid_velocity_y[i, j + 1, k + 1]) \
+                     - 0.25 * (self.grid_velocity_y[i, j, k - 1] + self.grid_velocity_y[i, j + 1, k - 1])
+                # wx = self.grid_velocity_z[i + 1, j, k] - self.grid_velocity_z[i, j, k]
+                # wy = self.grid_velocity_z[i, j + 1, k] - self.grid_velocity_z[i, j, k]
+                wx = 0.25 * (self.grid_velocity_z[i + 1, j, k] + self.grid_velocity_z[i + 1, j, k + 1]) \
+                     - 0.25 * (self.grid_velocity_z[i - 1, j, k] + self.grid_velocity_z[i - 1, j, k + 1])
+                wy = 0.25 * (self.grid_velocity_x[i, j + 1, k] + self.grid_velocity_x[i, j + 1, k + 1]) \
+                     - 0.25 * (self.grid_velocity_x[i, j - 1, k] + self.grid_velocity_x[i, j - 1, k + 1])
+                wz = self.grid_velocity_z[i, j, k + 1] - self.grid_velocity_z[i, j, k]
 
+                D[0, 0] = 2.0 * ux
+                D[0, 1] = uy + vx
+                D[0, 2] = uz + wx
+                D[1, 0] = vx + uy
+                D[1, 1] = 2.0 * vy
+                D[1, 2] = vz + wy
+                D[2, 0] = wx + uz
+                D[2, 1] = wy + vz
+                D[2, 2] = 2.0 * wz
+
+                D = D / 2.0 / self.dx
+                self.strain_rate[i, j, k] = D
+                self.stress[i, j, k] = -self.rho * D * self.dx * self.dx / self.dt
+
+    @ti.kernel
+    def friction_condition(self):
+        for i, j, k in self.stress:
+            if self.is_fluid(i, j, k):
+                D = self.strain_rate[i, j, k]
+                D_F_norm = ti.sqrt(D[0,0]**2 + D[0,1]**2 + D[0,2]**2 + D[1,0]**2 + D[1,1]**2 + D[1,2]**2
+                                 + D[2,0]**2 + D[2,1]**2 + D[2,2]**2)
+                stress_f = ti.Matrix.zero(ti.f32, 3, 3)
+                if D_F_norm > 1e-6:
+                    stress_f = -self.mu * self.pressure[i, j, k] * D / (ti.sqrt(1.0/3.0) * D_F_norm)
+
+                # todo: what does this mean? "the resulting σ_rigid satisfies the yield condition with the pressure we computed for incompressibility"
+                stress_m = self.stress[i, j, k].trace() / 3
+                stress_bar = self.stress[i, j, k] - stress_m * ti.Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+                bar_F_norm = ti.sqrt(stress_bar[0,0]**2 + stress_bar[0,1]**2 + stress_bar[0,2]**2
+                                   + stress_bar[1,0]**2 + stress_bar[1,1]**2 + stress_bar[1,2]**2
+                                   + stress_bar[2,0]**2 + stress_bar[2,1]**2 + stress_bar[2,2]**2)
+                if self.mu * self.pressure[i, j, k] <= bar_F_norm * ti.sqrt(3/2):
+                    self.stress[i, j, k] = stress_f
+                    self.sand_state[i, j, k] = 0 # flowing
+                else:
+                    self.sand_state[i, j, k] = 1 # rigidly moving
+
+
+    def update_sand_rigid_group(self):
+        states = self.sand_state.to_numpy()
+        labels_out = cc3d.connected_components(states, connectivity=6)
+        for label, group in cc3d.each(labels_out):
+            self.group_label.from_numpy(group)
+            self.update_sand_rigid_velocity()
+
+
+    @ti.kernel
+    def update_sand_rigid_velocity(self):
+        # update velocity for each rigid group
+        num = 0.0
+        velocity = ti.Vector([0.0, 0.0, 0.0], dt=ti.f32)
+        center_of_mass = ti.Vector([0.0, 0.0, 0.0], dt=ti.f32)
+        L = ti.Vector([0.0, 0.0, 0.0], dt=ti.f32)
+        I_00 = 0.0
+        I_01 = 0.0
+        I_02 = 0.0
+        I_11 = 0.0
+        I_12 = 0.0
+        I_22 = 0.0
+
+        for i, j, k in self.group_label:
+            if self.group_label[i, j, k] != 0:
+                ti.atomic_add(num, 1.0)
+                pos = ti.Vector([i+0.5, j+0.5, k+0.5], dt=ti.f32)
+                pos *= self.cell_extent
+                ti.atomic_add(center_of_mass, pos)
+
+        center_of_mass = center_of_mass / num
+
+        for i, j, k in self.group_label:
+            if self.group_label[i, j, k] != 0:
+                v1 = (self.grid_velocity_x[i, j, k] + self.grid_velocity_x[i + 1, j, k]) / 2.0
+                v2 = (self.grid_velocity_y[i, j, k] + self.grid_velocity_y[i, j + 1, k]) / 2.0
+                v3 = (self.grid_velocity_z[i, j, k] + self.grid_velocity_z[i, j, k + 1]) / 2.0
+                v = ti.Vector([v1, v2, v3], dt=ti.f32)
+                ti.atomic_add(velocity, v)
+                pos = ti.Vector([i + 0.5, j + 0.5, k + 0.5], dt=ti.f32)
+                pos *= self.cell_extent
+                r = pos - center_of_mass
+                ti.atomic_add(L, r.cross(v))
+                ti.atomic_add(I_00, r.x ** 2 + r.z ** 2)
+                ti.atomic_add(I_01, -r.x * r.y)
+                ti.atomic_add(I_02, -r.x * r.z)
+                ti.atomic_add(I_11, r.x ** 2 + r.z ** 2)
+                ti.atomic_add(I_12, -r.y * r.z)
+                ti.atomic_add(I_22, r.x ** 2 + r.y ** 2)
+
+        I = ti.Matrix.zero(ti.f32, 3, 3)
+        I[0, 0] = I_00
+        I[0, 1] = I_01
+        I[0, 2] = I_02
+        I[1, 0] = I_01
+        I[1, 1] = I_11
+        I[1, 2] = I_12
+        I[2, 0] = I_02
+        I[2, 1] = I_12
+        I[2, 2] = I_22
+        velocity = velocity / num
+        w = I.inverse() @ L
+        # print(num, w)
+
+        for i, j, k in self.group_label:
+            if self.group_label[i, j, k] != 0:
+                if num < 3 or ti.abs(w.x) > 1.0 or ti.abs(w.y) > 1.0 or ti.abs(w.z) > 1.0 :
+                    rigid_velocity = velocity  # + (pos - center_of_mass).cross(w) #todo: add angular velocity
+                    self.grid_velocity_x[i, j, k] = rigid_velocity.x
+                    self.grid_velocity_x[i + 1, j, k] = rigid_velocity.x
+                    self.grid_velocity_y[i, j, k] = rigid_velocity.y
+                    self.grid_velocity_y[i, j + 1, k] = rigid_velocity.y
+                    self.grid_velocity_z[i, j, k] = rigid_velocity.z
+                    self.grid_velocity_z[i, j, k + 1] = rigid_velocity.z
+                else:
+                    pos = ti.Vector([float(i), float(j) + 0.5, float(k) + 0.5], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_x[i, j, k] = rigid_velocity.x
+
+                    pos = ti.Vector([float(i) + 1.0, float(j) + 0.5, float(k) + 0.5], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_x[i + 1, j, k] = rigid_velocity.x
+
+                    pos = ti.Vector([float(i) + 0.5, float(j), float(k) + 0.5], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_y[i, j, k] = rigid_velocity.y
+
+                    pos = ti.Vector([float(i) + 0.5, float(j) + 1.0, float(k) + 0.5], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_y[i, j + 1, k] = rigid_velocity.y
+
+                    pos = ti.Vector([float(i) + 0.5, float(j) + 0.5, float(k)], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_z[i, j, k] = rigid_velocity.z
+
+                    pos = ti.Vector([float(i) + 0.5, float(j) + 0.5, float(k) + 1.0], dt=ti.f32)
+                    pos *= self.cell_extent
+                    rigid_velocity = velocity + (pos - center_of_mass).cross(w)
+                    self.grid_velocity_z[i, j, k + 1] = rigid_velocity.z
+
+    @ti.kernel
+    def update_sand_flowing(self):
+        scale = self.dt / (self.rho * self.dx)
+        for i, j, k in self.sand_state:
+            dsx = self.stress[i, j, k] - self.stress[i - 1, j, k]
+            dsy = 0.25 * (self.stress[i, j + 1, k] + self.stress[i - 1, j + 1, k]) \
+                  - 0.25 * (self.stress[i, j - 1, k] + self.stress[i - 1, j - 1, k])
+            dsz = 0.25 * (self.stress[i, j, k + 1] + self.stress[i - 1, j, k + 1]) \
+                  - 0.25 * (self.stress[i, j, k - 1] + self.stress[i - 1, j, k - 1])
+            # dsy = self.stress[i, j, k] - self.stress[i, j - 1, k]
+            # dsz = self.stress[i, j, k] - self.stress[i, j, k - 1]
+            if self.is_fluid(i - 1, j, k) and self.sand_state[i - 1, j, k] == 0 \
+                or self.is_fluid(i, j, k) and self.sand_state[i, j, k] == 0:
+                if self.is_solid(i - 1, j, k) or self.is_solid(i, j, k):
+                    self.grid_velocity_x[i, j, k] = 0
+                else:
+                    self.grid_velocity_x[i, j, k] -= scale * (dsx[0, 0] + dsy[0, 1] + dsz[0, 2])
+
+            dsx = 0.25 * (self.stress[i + 1, j, k] + self.stress[i + 1, j - 1, k]) \
+                  - 0.25 * (self.stress[i - 1, j, k] + self.stress[i - 1, j - 1, k])
+            dsy = self.stress[i, j, k] - self.stress[i, j - 1, k]
+            dsz = 0.25 * (self.stress[i, j, k + 1] + self.stress[i, j - 1, k + 1]) \
+                  - 0.25 * (self.stress[i, j, k - 1] + self.stress[i, j - 1, k - 1])
+            if self.is_fluid(i, j - 1, k) and self.sand_state[i, j - 1, k] == 0 \
+                or self.is_fluid(i, j, k) and self.sand_state[i, j, k] == 0:
+                if self.is_solid(i, j - 1, k) or self.is_solid(i, j, k):
+                    self.grid_velocity_y[i, j, k] = 0
+                else:
+                    self.grid_velocity_y[i, j, k] -= scale * (dsx[1, 0] + dsy[1, 1] + dsz[1, 2])
+
+            dsx = 0.25 * (self.stress[i + 1, j, k] + self.stress[i + 1, j, k - 1]) \
+                  - 0.25 * (self.stress[i - 1, j, k] + self.stress[i - 1, j, k - 1])
+            dsy = 0.25 * (self.stress[i, j + 1, k] + self.stress[i, j + 1, k - 1]) \
+                  - 0.25 * (self.stress[i, j - 1, k] + self.stress[i, j - 1, k - 1])
+            dsz = self.stress[i, j, k] - self.stress[i, j, k - 1]
+            if self.is_fluid(i, j, k - 1) and self.sand_state[i, j, k - 1] == 0 \
+                or self.is_fluid(i, j, k) and self.sand_state[i, j, k] == 0:
+                if self.is_solid(i, j, k - 1) or self.is_solid(i, j, k):
+                    self.grid_velocity_z[i, j, k] = 0
+                else:
+                    self.grid_velocity_z[i, j, k] -= scale * (dsx[2, 0] + dsy[2, 1] + dsz[2, 2])
+
+        # for i, j, k in self.sand_state:
+        #     if self.is_fluid(i, j, k) and self.sand_state[i, j, k] == 0:
+        #         s = self.stress[i, j, k] 
+        #         fx = (s[0, 0] + s[0, 1] + s[0, 2]) / self.dx
+        #         fy = (s[1, 0] + s[1, 1] + s[1, 2]) / self.dx
+        #         fz = (s[2, 0] + s[2, 1] + s[2, 2]) / self.dx
+        #         self.grid_velocity_x[i, j, k] -= self.dt / self.rho * fx
+        #         self.grid_velocity_y[i, j, k] -= self.dt / self.rho * fy
+        #         self.grid_velocity_z[i, j, k] -= self.dt / self.rho * fz
+
+        #         self.grid_velocity_x[i + 1, j, k] += self.dt / self.rho * fx
+        #         self.grid_velocity_y[i, j + 1, k] += self.dt / self.rho * fy
+        #         self.grid_velocity_z[i, j, k + 1] += self.dt / self.rho * fz
+
+        # for i, j in ti.ndrange(self.grid_size[0], self.grid_size[1]):
+        #     self.grid_velocity_z[i, j, 0] = 0
+        #     self.grid_velocity_z[i, j, 1] = 0
+        #     self.grid_velocity_z[i, j, self.grid_size[2]-1] = -9.8 * self.dt
+        #     self.grid_velocity_z[i, j, self.grid_size[2]] = -9.8 * self.dt
+
+        # for j, k in ti.ndrange(self.grid_size[1], self.grid_size[2]):
+        #     self.grid_velocity_x[0, j, k] = 0
+        #     self.grid_velocity_x[1, j, k] = 0
+        #     self.grid_velocity_x[self.grid_size[0]-1, j, k] = 0
+        #     self.grid_velocity_x[self.grid_size[0], j, k] = 0
+
+        # for i, k in ti.ndrange(self.grid_size[0], self.grid_size[2]):
+        #     self.grid_velocity_y[i, 0, k] = 0
+        #     self.grid_velocity_y[i, 1, k] = 0
+        #     self.grid_velocity_y[i, self.grid_size[1]-1, k] = 0
+        #     self.grid_velocity_y[i, self.grid_size[1], k] = 0
+
+    # @ti.kernel
+    # def enforce_frictional_boundary(self):
+    #     for i, j, k in ti.ndrange(self.grid_size[0], self.grid_size[1], self.grid_size[2]):
+    #         if self.is_fluid(i - 1, j, k) or self.is_fluid(i, j, k):
+    #             if self.is_solid(i - 1, j, k) or self.is_solid(i, j, k):
+    #                 self.grid_velocity_x[i, j, k] = 0 # u_solid = 0
+    #                 self.grid_velocity_y[i, j, k] *= 0.5
+    #                 self.grid_velocity_z[i, j, k] *= 0.5
+    #
+    #         if self.is_fluid(i, j - 1, k) or self.is_fluid(i, j, k):
+    #             if self.is_solid(i, j - 1, k) or self.is_solid(i, j, k):
+    #                 self.grid_velocity_y[i, j, k] = 0
+    #                 self.grid_velocity_x[i, j, k] *= 0.5
+    #                 self.grid_velocity_z[i, j, k] *= 0.5
+    #
+    #         if self.is_fluid(i, j, k - 1) or self.is_fluid(i, j, k):
+    #             if self.is_solid(i, j, k - 1) or self.is_solid(i, j, k):
+    #                 self.grid_velocity_z[i, j, k] = 0
+    #                 self.grid_velocity_y[i, j, k] *= 0.5
+    #                 self.grid_velocity_x[i, j, k] *= 0.5
 
 
 
