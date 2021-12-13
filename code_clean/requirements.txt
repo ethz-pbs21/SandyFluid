@@ -1,0 +1,5 @@
+taichi==0.7.32
+numpy
+scipy
+PyMCubes
+connected-components-3d
