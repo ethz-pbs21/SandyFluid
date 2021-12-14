@@ -3,7 +3,7 @@ from gui import SimulationGUI
 import taichi as ti
 import sys
 
-OUTPUT = True
+OUTPUT = False
 
 if __name__ == "__main__":
 

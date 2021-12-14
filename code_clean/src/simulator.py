@@ -9,8 +9,8 @@ import os
 import time
 # Note: all physical properties are in SI units (s for time, m for length, kg for mass, etc.)
 global_params = {
-    'mode' : 'flip',                            # pic, apic, flip
-    'flip_weight' : 0.95,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
+    'mode' : 'apic',                            # pic, apic, flip
+    'flip_weight' : 0.99,                       # FLIP * flip_weight + PIC * (1 - flip_weight)
     'dt' : 0.01,                                # Time step
     'g' : (0.0, 0.0, -9.8),                     # Body force
     'rho': 1000.0,                              # Density of the fluid
@@ -24,10 +24,10 @@ global_params = {
     'num_jacobi_iter' : 100,                    # Number of iterations for pressure solving
     'damped_jacobi_weight' : 1.0,               # Damping weighte in damped jacobi
 
-    'simulate_sand': True,                     # Simulate sand or water
+    'simulate_sand': False,                     # Simulate sand or water
     'sand_dt': 0.001,                           # Time step for simulating sand
 
-    'scene_init': 2,                            # Choose from 0, 1, 2 to init the particle positions differently
+    'scene_init': 1,                            # Choose from 0, 1, 2 to init the particle positions differently
 }
 
 FLUID = 0
