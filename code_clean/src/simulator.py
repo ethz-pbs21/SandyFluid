@@ -27,7 +27,7 @@ global_params = {
     'simulate_sand': False,                     # Simulate sand or water
     'sand_dt': 0.001,                           # Time step for simulating sand
 
-    'scene_init': 1,                            # Choose from 0, 1, 2 to init the particle positions differently
+    'scene_init': 0,                            # Choose from 0, 1, 2 to init the particle positions differently
 }
 
 FLUID = 0
