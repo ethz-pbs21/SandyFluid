@@ -1,6 +1,6 @@
 # Animate Sand as a Fluid
 
-*Physically-Based Simulation in Computer Graphics HS21*, ETH Zurich
+Course project for *Physically-Based Simulation in Computer Graphics HS21*, ETH Zurich
 
 *Group 19: Yifan Yu, Bo Li, Yitian Ma*
 
@@ -93,7 +93,11 @@ APIC:
 
 Rendered:
 
-<video src="rendered_results/water.mp4"></video>
+
+https://user-images.githubusercontent.com/22713281/154822363-acba1122-e701-4894-b837-5b11e3ff7bc1.mp4
+
+
+
 
 ### Sand
 
@@ -111,4 +115,7 @@ APIC:
 
 Rendered:
 
-<video src="rendered_results/sand.mp4"></video>
+https://user-images.githubusercontent.com/22713281/154822381-9b8196ba-ff78-4e33-a0bb-102fdaee5a13.mp4
+
+
+
