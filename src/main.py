@@ -3,6 +3,8 @@ from gui import SimulationGUI
 import taichi as ti
 import sys
 
+OUTPUT = False
+
 if __name__ == "__main__":
 
     ti.init(arch=ti.cuda)
@@ -12,7 +14,7 @@ if __name__ == "__main__":
 
     sim = Simulator()
     if n_frame is None:
-        gui = SimulationGUI(sim)
+        gui = SimulationGUI(sim, output_img=OUTPUT)
         gui.run()
     else:
         for i in range(n_frame):
