@@ -63,7 +63,7 @@ You can also export frames as PNGs to `output/{method}_{scene_init}/` by changin
 
 ## Dependencies
 
-- taichi==0.8.7
+- taichi==0.9.0
 - numpy
 - scipy
 - PyMCubes
