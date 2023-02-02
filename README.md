@@ -43,7 +43,7 @@ Run with GGUI:
 python main.py
 ```
 
-During running with GUI, you can press `Space` to reconstruct the mesh of current frame and export that into a obj model file. The output will reside in ../results.
+During running with GUI, you can press `Space` to reconstruct the mesh of current frame and export that into a obj model file. The output will reside in `../results`.
 
 You can also run without GUI and reconstruct each frame:
 
